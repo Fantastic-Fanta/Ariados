@@ -130,8 +130,9 @@ see the effect.
 - **Hidden strings**: single-byte XOR only. Stack-constructed strings need an
   emulator (à la Mandiant FLOSS) — not yet implemented.
 - **PE** is the weakest format: Windows binaries are stripped, so functions are
-  recovered by a code sweep, and IAT import *naming* is best-effort. Detection
-  via strings still works.
+  recovered by a code sweep rather than a symbol table. Imports now resolve
+  through the IAT, so call-based findings work, but function *names* stay
+  `sub_<addr>`.
 - Not a replacement for a real AV or sandbox; it's a triage and learning tool.
 
 ## Testing

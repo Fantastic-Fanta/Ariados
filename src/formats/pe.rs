@@ -66,10 +66,12 @@ pub fn parse(data: &[u8]) -> Result<Vec<Object>> {
     let entry = image_base + pe.entry as u64;
     functions.push(entry);
 
-    // Import slots: each import's `rva` is its IAT thunk address.
+    // Import slots: the IAT entry's RVA is goblin's `offset` field (import
+    // address table RVA + index*ptr size). Its `rva` field is the hint/name
+    // table RVA instead, which is not where code loads the pointer from.
     let mut import_slots: BTreeMap<u64, String> = BTreeMap::new();
     for imp in &pe.imports {
-        import_slots.insert(image_base + imp.rva as u64, imp.name.to_string());
+        import_slots.insert(image_base + imp.offset as u64, imp.name.to_string());
     }
 
     functions.sort_unstable();

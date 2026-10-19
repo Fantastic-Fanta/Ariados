@@ -59,6 +59,17 @@ fn stealer_pe_is_flagged() {
         "{:?}",
         r.verdict
     );
+    // IAT resolution means the credential+network chain is found (not just
+    // string-only findings), and a resolved import appears in the trails.
+    assert!(
+        has_finding(&r, "credential-exfiltration"),
+        "{:?}",
+        r.findings
+    );
+    assert!(
+        format!("{:?}", r.findings).contains("fopen"),
+        "no resolved import"
+    );
 }
 
 #[test]
