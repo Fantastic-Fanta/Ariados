@@ -26,6 +26,14 @@ engine, so rules and scoring tune without touching code.
 threshold. The flagged ones are mostly system security tools (`codesign`,
 `hdiutil`) that genuinely do credential/exec/persistence work.
 
+Large GUI apps legitimately network, use the keychain and install launch
+agents, so the verdict is **signing-aware**: a binary signed by a verified Apple
+developer (Developer ID / Apple authority, or Gatekeeper-accepted) is capped at
+low-risk for behavioral findings, while packing or hidden strings still flag it.
+Unsigned and ad-hoc binaries — the untrusted downloads this tool is really for —
+get full scrutiny. Across a real `/Applications` (93 apps), this takes the
+flag count from ~37 to a handful, all unsigned apps.
+
 ## Limitations
 
 - No data-flow analysis; chained behaviors use a short call-graph reach.
