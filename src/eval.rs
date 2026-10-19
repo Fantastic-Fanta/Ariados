@@ -28,6 +28,13 @@ pub struct CorpusResult {
 
 /// Scans every binary under `dirs`, counting files at or above `flag_at`.
 pub fn run_corpus(engine: &Engine, dirs: &[&Path], flag_at: VerdictLevel) -> CorpusResult {
+    use rayon::prelude::*;
+
+    // Gather every target, then scan them in parallel — each scan is
+    // independent and CPU-bound, so this scales across cores.
+    let targets: Vec<_> = dirs.iter().flat_map(|d| collect_targets(d)).collect();
+    let outcomes: Vec<_> = targets.par_iter().map(|t| engine.scan_file(t)).collect();
+
     let mut res = CorpusResult {
         total: 0,
         flagged: 0,
@@ -35,32 +42,39 @@ pub fn run_corpus(engine: &Engine, dirs: &[&Path], flag_at: VerdictLevel) -> Cor
         behavior_counts: BTreeMap::new(),
         flagged_files: Vec::new(),
     };
-    for dir in dirs {
-        for target in collect_targets(dir) {
-            match engine.scan_file(&target) {
-                Ok(r) => {
-                    res.total += 1;
-                    for f in &r.findings {
-                        *res.behavior_counts.entry(f.id.clone()).or_default() += 1;
-                    }
-                    if r.verdict.level >= flag_at {
-                        res.flagged += 1;
-                        res.flagged_files
-                            .push((r.path, r.verdict.level, r.verdict.score));
-                    }
+    for outcome in outcomes {
+        match outcome {
+            Ok(r) => {
+                res.total += 1;
+                for f in &r.findings {
+                    *res.behavior_counts.entry(f.id.clone()).or_default() += 1;
                 }
-                Err(_) => res.errors += 1,
+                if r.verdict.level >= flag_at {
+                    res.flagged += 1;
+                    res.flagged_files
+                        .push((r.path, r.verdict.level, r.verdict.score));
+                }
             }
+            Err(_) => res.errors += 1,
         }
     }
     res
 }
 
-/// Runs an evaluation and prints a human-readable summary.
-pub fn report(engine: &Engine, benign: &[&Path], malicious: &[&Path], flag_at: VerdictLevel) {
+/// Runs an evaluation and prints a human-readable summary. `benign_engine` is
+/// tuned for speed over a large corpus (hidden-string decoding off); the
+/// malicious corpus is small, so `mal_engine` runs the full pipeline for an
+/// accurate detection rate.
+pub fn report(
+    benign_engine: &Engine,
+    mal_engine: &Engine,
+    benign: &[&Path],
+    malicious: &[&Path],
+    flag_at: VerdictLevel,
+) {
     println!("Evaluation (flagging at: {:?})\n", flag_at);
 
-    let b = run_corpus(engine, benign, flag_at);
+    let b = run_corpus(benign_engine, benign, flag_at);
     let fp_rate = pct(b.flagged, b.total);
     println!("Benign corpus: {} files, {} errors", b.total, b.errors);
     println!("  false positives: {} ({fp_rate:.2}%)", b.flagged);
@@ -80,7 +94,7 @@ pub fn report(engine: &Engine, benign: &[&Path], malicious: &[&Path], flag_at: V
     }
 
     if !malicious.is_empty() {
-        let m = run_corpus(engine, malicious, flag_at);
+        let m = run_corpus(mal_engine, malicious, flag_at);
         let det = pct(m.flagged, m.total);
         println!("\nMalicious corpus: {} files, {} errors", m.total, m.errors);
         println!("  detected: {} ({det:.2}%)", m.flagged);

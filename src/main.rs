@@ -216,10 +216,21 @@ fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCod
     let benign_refs: Vec<&std::path::Path> = benign_paths.iter().map(|p| p.as_path()).collect();
     let malicious_refs: Vec<&std::path::Path> = malicious.iter().map(|p| p.as_path()).collect();
 
-    let mut engine = Engine::builtin();
-    engine.enrich_signing = false; // avoid thousands of codesign subprocesses
-    engine.decode_hidden = false; // the XOR sweep would dominate a bulk run
-    ariados::eval::report(&engine, &benign_refs, &malicious_refs, level);
+    // Benign corpus is large: skip codesign subprocesses and the XOR sweep so
+    // the run stays fast. Malicious corpus is small: run the full pipeline so
+    // obfuscation-based detections count.
+    let mut benign_engine = Engine::builtin();
+    benign_engine.enrich_signing = false;
+    benign_engine.decode_hidden = false;
+    let mut mal_engine = Engine::builtin();
+    mal_engine.enrich_signing = false; // detection, not signing, is what we measure
+    ariados::eval::report(
+        &benign_engine,
+        &mal_engine,
+        &benign_refs,
+        &malicious_refs,
+        level,
+    );
     ExitCode::SUCCESS
 }
 
@@ -231,10 +242,18 @@ fn cmd_scan(path: &std::path::Path, json: bool, md: bool, verdict_only: bool) ->
         return ExitCode::from(2);
     }
 
+    // Scan targets in parallel (order preserved by rayon's indexed collect),
+    // then handle results sequentially so output and errors stay deterministic.
+    use rayon::prelude::*;
+    let outcomes: Vec<_> = targets
+        .par_iter()
+        .map(|t| (t, engine.scan_file(t)))
+        .collect();
+
     let mut worst = 0u8;
     let mut reports = Vec::new();
-    for target in &targets {
-        match engine.scan_file(target) {
+    for (target, outcome) in outcomes {
+        match outcome {
             Ok(r) => {
                 worst = worst.max(r.verdict.level.exit_code());
                 reports.push(r);
