@@ -54,7 +54,6 @@ pub fn build(obj: &Object) -> Graph {
             return None;
         }
         let xref = dis.xref_range(obj, start, bytes);
-        let stack_strings = dis.stack_strings(start, bytes, 6);
         let name = match obj.names.get(&start) {
             Some(n) if n.kind == NameKind::LocalFunction => n.name.clone(),
             _ => format!("sub_{start:x}"),
@@ -67,7 +66,7 @@ pub fn build(obj: &Object) -> Graph {
                 strings: xref.strings.into_iter().map(|(_, s)| s).collect(),
                 imports: xref.imports,
                 calls: xref.calls,
-                stack_strings,
+                stack_strings: xref.stack_strings,
             },
         ))
     };
