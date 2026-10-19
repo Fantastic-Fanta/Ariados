@@ -39,6 +39,16 @@ enum Command {
         #[arg(long)]
         no_yara: bool,
     },
+    /// Scan a directory for supply-chain risks: install scripts that fetch and
+    /// run code, npm/MCP configs that launch remote commands, and prompt
+    /// injection in agent/skill files.
+    Supplychain {
+        /// Directory to scan.
+        path: PathBuf,
+        /// Emit JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Audit macOS persistence (LaunchAgents/Daemons, cron, shell profiles) for
     /// unsigned or dropper-like items. Read-only.
     Audit {
@@ -102,6 +112,7 @@ fn main() -> ExitCode {
             yara,
             no_yara,
         } => cmd_scan(&path, json, md, verdict_only, yara, no_yara),
+        Command::Supplychain { path, json } => cmd_supplychain(&path, json),
         Command::Audit { all } => cmd_audit(all),
         Command::Strings {
             path,
@@ -245,6 +256,42 @@ fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCod
         level,
     );
     ExitCode::SUCCESS
+}
+
+fn cmd_supplychain(path: &std::path::Path, json: bool) -> ExitCode {
+    use ariados::supplychain::Severity;
+    let hits = ariados::supplychain::scan_dir(path);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&hits).unwrap_or_default()
+        );
+        return ExitCode::from(if hits.is_empty() { 0 } else { 1 });
+    }
+    println!("ariados supply-chain scan — {}\n", path.display());
+    if hits.is_empty() {
+        println!("No supply-chain risks found.");
+        return ExitCode::SUCCESS;
+    }
+    for h in &hits {
+        let dot = match h.severity {
+            Severity::High => "●",
+            Severity::Medium => "◆",
+            Severity::Low => "○",
+        };
+        let loc = if h.line > 0 {
+            format!("{}:{}", h.path, h.line)
+        } else {
+            h.path.clone()
+        };
+        println!("{dot} {:?}  {}  [{}]", h.severity, h.detail, h.rule);
+        println!("   {loc}");
+        println!("   {}", h.snippet);
+        println!();
+    }
+    let high = hits.iter().filter(|h| h.severity == Severity::High).count();
+    println!("{} finding(s), {high} high-severity.", hits.len());
+    ExitCode::from(if high > 0 { 2 } else { 1 })
 }
 
 fn cmd_audit(all: bool) -> ExitCode {
