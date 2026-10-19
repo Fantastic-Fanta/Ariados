@@ -1,0 +1,100 @@
+# Behaviors: the findings. Each combines capabilities (from capabilities.toml)
+# into something worth reporting, and carries the evidence that triggered it.
+#
+# Three forms:
+#   capability = "x"            -> x present in any one function
+#   all = ["a","b"]             -> a AND b in the SAME function
+#   source = "a", reaches = "b" -> a function with a that calls (within a few
+#                                  hops) a function with b  (a chained trail)
+
+[[behavior]]
+id = "credential-exfiltration"
+severity = "high"
+title = "Collects stored credentials and reaches network-sending code"
+source = "credential-access"
+reaches = "network"
+supersedes = ["credential-access"]
+
+[[behavior]]
+id = "credential-access"
+severity = "medium"
+title = "Reads stored credentials, cookies or keychain data"
+capability = "credential-access"
+
+[[behavior]]
+id = "fake-password-prompt"
+severity = "high"
+title = "Shows a fake password prompt via AppleScript"
+all = ["password-dialog", "osascript-exec"]
+supersedes = ["password-prompt-string"]
+
+[[behavior]]
+id = "password-prompt-string"
+severity = "medium"
+title = "Contains the text of a password prompt"
+capability = "password-dialog"
+
+[[behavior]]
+id = "launch-persistence"
+severity = "medium"
+title = "Installs itself to run at login (LaunchAgent/Daemon/login item)"
+capability = "launch-persistence"
+
+[[behavior]]
+id = "persistence-via-write"
+severity = "high"
+title = "Writes a persistence item to disk"
+source = "launch-persistence"
+reaches = "file-write"
+supersedes = ["launch-persistence"]
+
+[[behavior]]
+id = "download-and-run"
+severity = "high"
+title = "Fetches data from the network and loads or executes code"
+source = "network"
+reaches = "dynamic-code"
+
+[[behavior]]
+id = "download-and-shell"
+severity = "high"
+title = "Fetches data from the network and runs a shell command"
+source = "network"
+reaches = "shell-exec"
+
+[[behavior]]
+id = "anti-debug"
+severity = "medium"
+title = "Detects or resists a debugger"
+capability = "anti-debug"
+
+[[behavior]]
+id = "screen-capture"
+severity = "medium"
+title = "Captures the screen"
+capability = "screen-capture"
+
+[[behavior]]
+id = "keylogging"
+severity = "high"
+title = "Installs a system-wide input tap (keylogging)"
+capability = "keylog-input"
+
+[[behavior]]
+id = "clipboard-and-network"
+severity = "high"
+title = "Reads the clipboard and reaches network-sending code"
+source = "clipboard"
+reaches = "network"
+
+[[behavior]]
+id = "quarantine-evasion"
+severity = "medium"
+title = "Strips the quarantine/Gatekeeper attribute from a file"
+capability = "quarantine-evasion"
+
+[[behavior]]
+id = "anti-analysis-env"
+severity = "low"
+title = "Fingerprints the host or checks for a virtual machine"
+capability = "env-discovery"

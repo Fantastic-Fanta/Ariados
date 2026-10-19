@@ -6,6 +6,7 @@
 //! graph, and renders an evidence-backed report. The binary in `main.rs` is a
 //! thin CLI over this library.
 
+pub mod analysis;
 pub mod byteutil;
 pub mod disasm;
 pub mod entropy;
@@ -13,6 +14,10 @@ pub mod error;
 pub mod formats;
 pub mod graph;
 pub mod model;
+pub mod policy;
+pub mod report;
+pub mod rules;
+pub mod scan;
 pub mod strings;
 
 pub use error::AnalyzeError;

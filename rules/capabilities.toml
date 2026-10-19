@@ -1,0 +1,105 @@
+# Capabilities: what a single function does, inferred from the library
+# functions it calls and the strings it references. These are building blocks;
+# the findings in behaviors.toml combine them. String patterns are regexes
+# (case-sensitive unless you add (?i)); import patterns are case-insensitive
+# substrings matched against the imported symbol name.
+
+[[capability]]
+id = "network"
+imports = ["curl_easy", "CFURL", "CFNetwork", "NSURLSession", "NSURLConnection",
+           "connect", "send", "sendto", "socket", "getaddrinfo", "SSLWrite",
+           "SSLHandshake", "res_query", "dnssd"]
+strings = ["^https?://", "^ftp://", "^wss?://", "User-Agent:", "POST .* HTTP"]
+
+[[capability]]
+id = "credential-access"
+# Paths and filenames of places credentials and session data are kept.
+strings = ["Login Data",
+           "login\\.keychain",
+           "cookies\\.sqlite",
+           "Local State",
+           "key4\\.db",
+           "logins\\.json",
+           "wallet\\.dat",
+           "/\\.ssh/",
+           "id_rsa",
+           "Keychains"]
+imports = ["SecKeychain", "SecItemCopyMatching"]
+
+[[capability]]
+id = "osascript-exec"
+# Driving AppleScript / osascript, a common way to script the UI or escalate.
+strings = ["osascript", "NSAppleScript"]
+imports = ["NSAppleScript", "OSAExecute"]
+
+[[capability]]
+id = "password-dialog"
+# Text of a prompt that asks the user for their password.
+strings = ["(?i)display dialog",
+           "(?i)needs your password",
+           "(?i)enter your password",
+           "(?i)with hidden answer"]
+
+[[capability]]
+id = "launch-persistence"
+# Writing a login item, LaunchAgent or LaunchDaemon so code runs at startup.
+strings = ["LaunchAgents/",
+           "LaunchDaemons/",
+           "/StartupItems/",
+           "com\\.apple\\..*\\.plist",
+           "loginwindow",
+           "SMLoginItemSetEnabled"]
+imports = ["SMLoginItemSetEnabled"]
+
+[[capability]]
+id = "shell-exec"
+# Running another program or a shell command.
+imports = ["system", "popen", "execve", "execl", "execvp", "posix_spawn", "fork", "NSTask"]
+strings = ["/bin/sh", "/bin/bash", "/bin/zsh"]
+
+[[capability]]
+id = "file-write"
+imports = ["fopen", "fwrite", "fputs", "open", "write", "writeToFile", "rename", "unlink", "remove"]
+
+[[capability]]
+id = "anti-debug"
+# Detecting or resisting a debugger / analysis. ptrace on macOS is almost
+# always PT_DENY_ATTACH; sysctl/csops are too common to flag on their own.
+imports = ["ptrace"]
+strings = ["P_TRACED", "AmIBeingDebugged", "PT_DENY_ATTACH"]
+
+[[capability]]
+id = "dynamic-code"
+# Loading or executing code at runtime — unpacking, plugins, injection.
+imports = ["dlopen", "dlsym", "NSCreateObjectFileImageFromMemory",
+           "NSLinkModule", "mprotect", "mmap", "vm_protect"]
+
+[[capability]]
+id = "crypto"
+imports = ["CCCrypt", "CCCryptorCreate", "EVP_", "AES_", "SecKeyCreate", "CryptoKit"]
+strings = ["-----BEGIN"]
+
+[[capability]]
+id = "screen-capture"
+imports = ["CGDisplayCreateImage", "CGWindowListCreateImage", "SCStream", "SCShareableContent"]
+
+[[capability]]
+id = "keylog-input"
+imports = ["CGEventTapCreate", "IOHIDManager", "CGEventTapEnable"]
+
+[[capability]]
+id = "clipboard"
+imports = ["NSPasteboard", "PasteboardCopyItemFlavors", "UIPasteboard"]
+
+[[capability]]
+id = "quarantine-evasion"
+# Removing the quarantine flag or Gatekeeper attributes from a file.
+strings = ["com\\.apple\\.quarantine", "xattr -d", "quarantine"]
+imports = ["removexattr"]
+
+[[capability]]
+id = "env-discovery"
+# Fingerprinting the host (hardware IDs, serial numbers, VM detection).
+strings = ["IOPlatformSerialNumber", "IOPlatformUUID", "hw\\.model",
+           "(?i)vmware", "(?i)virtualbox", "(?i)parallels"]
+imports = ["gethostuuid"]
