@@ -116,41 +116,17 @@ pub fn render_json(r: &Report) -> String {
     serde_json::to_string_pretty(r).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
 }
 
-/// Renders one or more reports as a self-contained HTML page. Handy for
-/// reviewing a whole `.app` bundle or a directory scan in a browser.
-pub fn render_html(reports: &[Report]) -> String {
-    let mut body = String::new();
-    for r in reports {
-        body.push_str(&html_report(r));
-    }
-    format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-<title>ariados report</title><style>{CSS}</style></head>\
-<body><h1>ariados {VERSION}</h1>{body}</body></html>"
-    )
+/// Renders one or more reports as a Markdown document — clean, professional,
+/// and good for attaching to a ticket or committing alongside a review.
+pub fn render_markdown(reports: &[Report]) -> String {
+    reports
+        .iter()
+        .map(md_report)
+        .collect::<Vec<_>>()
+        .join("\n---\n\n")
 }
 
-const CSS: &str = "\
-:root{color-scheme:light dark}\
-body{font:14px/1.5 -apple-system,system-ui,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;background:#fff;color:#1a1a1a}\
-@media(prefers-color-scheme:dark){body{background:#16181c;color:#e6e6e6}.card{background:#1e2127;border-color:#2c2f36}code{background:#2c2f36}}\
-h1{font-size:1.3rem}\
-.card{border:1px solid #e2e2e2;border-radius:10px;padding:1rem 1.2rem;margin:1rem 0;background:#fafafa}\
-.meta{color:#888;font-size:.85rem;margin:.2rem 0 .8rem}\
-.verdict{display:inline-block;padding:.2rem .6rem;border-radius:6px;font-weight:600}\
-.v3{background:#c0392b;color:#fff}.v2{background:#e67e22;color:#fff}.v1{background:#f1c40f;color:#333}.v0{background:#27ae60;color:#fff}\
-.finding{border-left:3px solid #ccc;padding:.4rem 0 .4rem .8rem;margin:.8rem 0}\
-.sev-high{border-color:#c0392b}.sev-medium{border-color:#e67e22}.sev-low{border-color:#f1c40f}.sev-info{border-color:#aaa}\
-.badge{font-size:.72rem;font-weight:700;padding:.08rem .4rem;border-radius:4px;color:#fff;margin-right:.4rem}\
-.b-high{background:#c0392b}.b-medium{background:#e67e22}.b-low{background:#f1c40f;color:#333}.b-info{background:#888}\
-.step{margin:.3rem 0 .3rem 1rem}.step .fn{font-weight:600}\
-ul.ev{margin:.2rem 0 .2rem 1.4rem;padding:0;list-style:none}\
-ul.ev li{color:#555}ul.ev li::before{content:'├─ ';color:#aaa}\
-@media(prefers-color-scheme:dark){ul.ev li{color:#aab}.meta{color:#99a}}\
-code{background:#eee;padding:.05rem .3rem;border-radius:4px;font-size:.85em}";
-
-fn html_report(r: &Report) -> String {
+fn md_report(r: &Report) -> String {
     let name = std::path::Path::new(&r.path)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -159,60 +135,56 @@ fn html_report(r: &Report) -> String {
         crate::model::Signing::Signed => "signed".into(),
         crate::model::Signing::Unsigned => "unsigned".into(),
     });
-    let vclass = format!("v{}", r.verdict.level.exit_code());
 
-    let mut findings = String::new();
-    for f in &r.findings {
-        findings.push_str(&html_finding(f));
-    }
+    let mut s = String::new();
+    s.push_str(&format!("# Ariados report: {name}\n\n"));
+    s.push_str(&format!(
+        "**Verdict: {}** (score {})\n\n",
+        r.verdict.level.headline(),
+        r.verdict.score
+    ));
+    s.push_str(&format!("- **Format:** {}\n", r.format));
+    s.push_str(&format!("- **Architectures:** {}\n", r.arches.join(" + ")));
+    s.push_str(&format!("- **Signing:** {signing}\n"));
+    s.push_str(&format!("- **SHA-256:** `{}`\n\n", r.sha256));
+
     if r.findings.is_empty() {
-        findings.push_str("<p>No suspicious behaviors found.</p>");
+        s.push_str("No suspicious behaviors found.\n");
+        return s;
     }
 
-    format!(
-        "<div class=\"card\"><h2>{name}</h2>\
-<div class=\"meta\">{} · {} · {} · sha256 {}</div>\
-<p><span class=\"verdict {vclass}\">{}</span> &nbsp;score {}</p>{findings}</div>",
-        esc(&r.format.to_string()),
-        esc(&r.arches.join(" + ")),
-        esc(&signing),
-        &r.sha256[..r.sha256.len().min(16)],
-        esc(r.verdict.level.headline()),
-        r.verdict.score,
-    )
+    s.push_str(&format!("## Findings ({})\n\n", r.findings.len()));
+    for f in &r.findings {
+        s.push_str(&md_finding(f));
+    }
+    s
 }
 
-fn html_finding(f: &Finding) -> String {
-    let sev = f.severity.label().to_lowercase();
-    let mut steps = String::new();
-    for step in &f.trail {
-        let mut items = String::new();
+fn md_finding(f: &Finding) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("### {} — {}\n\n", f.severity.label(), f.title));
+    s.push_str(&format!("_{}_\n\n", f.arch));
+    for (i, step) in f.trail.iter().enumerate() {
+        s.push_str(&format!(
+            "{}. **`{}`** `{:#x}`\n",
+            i + 1,
+            step.function,
+            step.addr
+        ));
         for ev in &step.evidence {
-            let (k, v) = match ev {
+            let (kind, val) = match ev {
                 Evidence::String(v) => ("string", v.clone()),
                 Evidence::Import(v) => ("import", v.clone()),
                 Evidence::Call(v) => ("calls", v.clone()),
             };
-            items.push_str(&format!("<li><code>{k}</code> {}</li>", esc(&v)));
+            s.push_str(&format!("   - {kind}: `{}`\n", md_escape(&val)));
         }
-        steps.push_str(&format!(
-            "<div class=\"step\"><span class=\"fn\">{}</span> @ {:#x}<ul class=\"ev\">{items}</ul></div>",
-            esc(&step.function),
-            step.addr
-        ));
     }
-    format!(
-        "<div class=\"finding sev-{sev}\"><span class=\"badge b-{sev}\">{}</span>{} <span class=\"meta\">({})</span>{steps}</div>",
-        f.severity.label(),
-        esc(&f.title),
-        esc(&f.arch),
-    )
+    s.push('\n');
+    s
 }
 
-/// Minimal HTML escaping for text we embed.
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+/// Escapes backticks so a string containing one doesn't break the code span.
+fn md_escape(s: &str) -> String {
+    s.replace('`', "'")
 }

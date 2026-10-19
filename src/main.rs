@@ -26,9 +26,9 @@ enum Command {
         /// Emit JSON instead of text.
         #[arg(long)]
         json: bool,
-        /// Emit a self-contained HTML report instead of text.
+        /// Emit a Markdown report instead of text.
         #[arg(long)]
-        html: bool,
+        md: bool,
         /// Print only the verdict line.
         #[arg(long)]
         verdict_only: bool,
@@ -84,9 +84,9 @@ fn main() -> ExitCode {
         Command::Scan {
             path,
             json,
-            html,
+            md,
             verdict_only,
-        } => cmd_scan(&path, json, html, verdict_only),
+        } => cmd_scan(&path, json, md, verdict_only),
         Command::Strings {
             path,
             min,
@@ -223,7 +223,7 @@ fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCod
     ExitCode::SUCCESS
 }
 
-fn cmd_scan(path: &std::path::Path, json: bool, html: bool, verdict_only: bool) -> ExitCode {
+fn cmd_scan(path: &std::path::Path, json: bool, md: bool, verdict_only: bool) -> ExitCode {
     let engine = Engine::builtin();
     let targets = collect_targets(path);
     if targets.is_empty() {
@@ -250,8 +250,8 @@ fn cmd_scan(path: &std::path::Path, json: bool, html: bool, verdict_only: bool) 
         }
     }
 
-    if html {
-        print!("{}", report::render_html(&reports));
+    if md {
+        print!("{}", report::render_markdown(&reports));
     } else if json {
         let joined: Vec<_> = reports.iter().collect();
         println!(
