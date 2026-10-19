@@ -76,6 +76,80 @@ pub fn xor_strings(obj: &Object, min_len: usize) -> Vec<Hidden> {
     out
 }
 
+/// Indicator cribs and their labels, used by the fast scan-path search below.
+/// These mirror `notable()` but are the literal needles to look for.
+const INDICATORS: &[(&str, &str)] = &[
+    ("http://", "URL"),
+    ("https://", "URL"),
+    ("osascript", "shell/script command"),
+    ("do shell script", "shell/script command"),
+    ("/bin/sh -c", "shell/script command"),
+    ("LaunchAgents/", "persistence path"),
+    ("LaunchDaemons/", "persistence path"),
+    ("login.keychain-db", "credential store"),
+    ("cookies.sqlite", "credential store"),
+    ("Login Data", "credential store"),
+];
+
+/// A hidden indicator string recovered quickly for the scan path.
+#[derive(Debug, Clone)]
+pub struct HiddenIndicator {
+    pub key: u8,
+    pub label: &'static str,
+    pub text: String,
+}
+
+/// Finds single-byte-XOR-hidden indicator strings in data sections, fast.
+///
+/// Instead of brute-forcing all 255 keys and extracting every string (which
+/// produces millions of hits on a real app), this exploits a property of
+/// single-byte XOR: it cancels in the byte-to-byte difference, so `c[i]^c[i+1]`
+/// equals `plain[i]^plain[i+1]` regardless of the key. We search the data's
+/// difference stream for each indicator's difference signature with one
+/// `memmem` per indicator, recover the key at each hit, and decode the run.
+pub fn xor_indicators(obj: &Object) -> Vec<HiddenIndicator> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for sec in &obj.sections {
+        if sec.kind == SectionKind::Code || sec.bytes.len() < 8 {
+            continue;
+        }
+        let data = &sec.bytes[..sec.bytes.len().min(MAX_SECTION_SCAN)];
+        // Difference stream of the ciphertext (key-independent).
+        let data_diff: Vec<u8> = data.windows(2).map(|w| w[0] ^ w[1]).collect();
+
+        for (crib, label) in INDICATORS {
+            let c = crib.as_bytes();
+            if c.len() < 2 {
+                continue;
+            }
+            let crib_diff: Vec<u8> = c.windows(2).map(|w| w[0] ^ w[1]).collect();
+            for pos in memchr::memmem::find_iter(&data_diff, &crib_diff) {
+                // Single-byte key that makes data[pos..] decode to the crib.
+                let key = data[pos] ^ c[0];
+                if key == 0 {
+                    continue; // key 0 == plaintext, not hidden
+                }
+                // Expand to the full printable run around the match.
+                let dec = |i: usize| data[i] ^ key;
+                let mut start = pos;
+                while start > 0 && is_text(dec(start - 1)) {
+                    start -= 1;
+                }
+                let mut end = pos + c.len();
+                while end < data.len() && is_text(dec(end)) {
+                    end += 1;
+                }
+                let text: String = (start..end).map(|i| dec(i) as char).collect();
+                if seen.insert(text.clone()) {
+                    out.push(HiddenIndicator { key, label, text });
+                }
+            }
+        }
+    }
+    out
+}
+
 /// If a decoded string looks like a malware indicator, returns a short label.
 /// Used to turn hidden-string recovery into a finding, since a *hidden*
 /// suspicious string is a much stronger signal than a plaintext one.

@@ -19,6 +19,9 @@ pub struct FunctionInfo {
     pub imports: Vec<String>,
     /// Addresses of local functions it directly calls.
     pub calls: Vec<u64>,
+    /// Strings this function builds on the stack byte by byte. Computed in the
+    /// same disassembly pass so hidden-string detection needs no second one.
+    pub stack_strings: Vec<String>,
 }
 
 pub struct Graph {
@@ -37,32 +40,26 @@ impl Graph {
 }
 
 /// Builds the evidence graph for one object by disassembling each function.
+///
+/// Functions are independent, so they disassemble in parallel — each worker
+/// thread keeps its own capstone handle (which isn't shareable). Each function
+/// yields its cross-references and stack strings from a single disassembly.
 pub fn build(obj: &Object) -> Graph {
-    let mut functions = BTreeMap::new();
-    let dis = match Disassembler::new(obj.arch) {
-        Ok(d) => d,
-        Err(_) => {
-            return Graph {
-                arch: obj.arch,
-                functions,
-            };
-        }
-    };
+    use rayon::prelude::*;
 
-    for &start in &obj.functions {
-        let Some(bytes) = obj.function_bytes(start) else {
-            continue;
-        };
+    let analyze = |dis: &mut Option<Disassembler>, &start: &u64| -> Option<(u64, FunctionInfo)> {
+        let dis = dis.as_ref()?;
+        let bytes = obj.function_bytes(start)?;
         if bytes.is_empty() {
-            continue;
+            return None;
         }
-
         let xref = dis.xref_range(obj, start, bytes);
+        let stack_strings = dis.stack_strings(start, bytes, 6);
         let name = match obj.names.get(&start) {
             Some(n) if n.kind == NameKind::LocalFunction => n.name.clone(),
             _ => format!("sub_{start:x}"),
         };
-        functions.insert(
+        Some((
             start,
             FunctionInfo {
                 addr: start,
@@ -70,12 +67,17 @@ pub fn build(obj: &Object) -> Graph {
                 strings: xref.strings.into_iter().map(|(_, s)| s).collect(),
                 imports: xref.imports,
                 calls: xref.calls,
+                stack_strings,
             },
-        );
-    }
+        ))
+    };
 
-    Graph {
-        arch: obj.arch,
-        functions,
-    }
+    let functions: BTreeMap<u64, FunctionInfo> = obj
+        .functions
+        .par_iter()
+        .map_init(|| Disassembler::new(obj.arch).ok(), analyze)
+        .flatten()
+        .collect();
+
+    Graph { arch: obj.arch, functions }
 }

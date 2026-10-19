@@ -81,6 +81,7 @@ dependencies = [
  "capstone",
  "clap",
  "goblin",
+ "memchr",
  "rayon",
  "regex",
  "serde",

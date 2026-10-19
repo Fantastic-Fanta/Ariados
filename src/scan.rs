@@ -48,17 +48,21 @@ impl Engine {
 
         let arches = arches_label(&program.objects.iter().map(|o| o.arch).collect::<Vec<_>>());
 
+        // Build each slice's graph once (disassembly is the expensive step) and
+        // reuse it for rule matching and stack-string detection.
+        let graphs: Vec<(String, graph::Graph)> = program
+            .objects
+            .iter()
+            .map(|obj| (obj.arch.label().to_string(), graph::build(obj)))
+            .collect();
+
         // Match rules per architecture slice, then merge identical findings
         // (fat binaries report the same behavior in each slice).
         let mut merged: BTreeMap<String, Finding> = BTreeMap::new();
         let mut arches_with: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for obj in &program.objects {
-            let g = graph::build(obj);
-            for f in self.rules.match_graph(&g, obj.arch.label()) {
-                arches_with
-                    .entry(f.id.clone())
-                    .or_default()
-                    .push(obj.arch.label().to_string());
+        for (arch, g) in &graphs {
+            for f in self.rules.match_graph(g, arch) {
+                arches_with.entry(f.id.clone()).or_default().push(arch.clone());
                 merged.entry(f.id.clone()).or_insert(f);
             }
         }
@@ -74,7 +78,7 @@ impl Engine {
         // Hidden strings: a suspicious string that was XOR-obfuscated is a much
         // stronger signal than a plaintext one, so it gets its own finding.
         if self.decode_hidden
-            && let Some(f) = self.hidden_string_finding(&program)
+            && let Some(f) = hidden_string_finding(&program, &graphs)
         {
             findings.push(f);
         }
@@ -132,65 +136,50 @@ impl Engine {
     }
 }
 
-impl Engine {
-    /// Builds a finding from XOR-obfuscated strings that decode to indicators,
-    /// de-duplicating across fat-binary slices.
-    fn hidden_string_finding(&self, program: &crate::model::Program) -> Option<Finding> {
-        use crate::analysis::{Evidence, TrailStep};
-        let mut seen = std::collections::BTreeSet::new();
-        let mut evidence = Vec::new();
+/// Builds a finding from XOR-obfuscated indicators (fast delta search) and
+/// stack-constructed strings (read from the already-built graphs), de-duped
+/// across fat-binary slices.
+fn hidden_string_finding(
+    program: &crate::model::Program,
+    graphs: &[(String, graph::Graph)],
+) -> Option<Finding> {
+    use crate::analysis::{Evidence, TrailStep};
+    let mut seen = std::collections::BTreeSet::new();
+    let mut evidence = Vec::new();
 
-        for obj in &program.objects {
-            // XOR-obfuscated strings in data sections.
-            for h in crate::decode::xor_strings(obj, 6) {
-                if let Some(label) = crate::decode::notable(&h.text)
-                    && seen.insert(h.text.clone())
-                {
-                    evidence.push(Evidence::String(format!(
-                        "[hidden · XOR key {:#04x} · {label}] {}",
-                        h.key, h.text
-                    )));
-                }
-            }
-            // Stack-constructed strings (built byte by byte in code).
-            if let Ok(dis) = crate::disasm::Disassembler::new(obj.arch) {
-                for &start in &obj.functions {
-                    let Some(bytes) = obj.function_bytes(start) else {
-                        continue;
-                    };
-                    for s in dis.stack_strings(start, bytes, 6) {
-                        if let Some(label) = crate::decode::notable(&s)
-                            && seen.insert(s.clone())
-                        {
-                            evidence.push(Evidence::String(format!(
-                                "[hidden · stack string · {label}] {s}"
-                            )));
-                        }
-                    }
-                }
+    for obj in &program.objects {
+        for h in crate::decode::xor_indicators(obj) {
+            if seen.insert(h.text.clone()) {
+                evidence.push(Evidence::String(format!(
+                    "[hidden · XOR key {:#04x} · {}] {}",
+                    h.key, h.label, h.text
+                )));
             }
         }
-        if evidence.is_empty() {
-            return None;
-        }
-        Some(Finding {
-            id: "obfuscated-indicators".into(),
-            title: "Hides suspicious strings (XOR or stack-constructed)".into(),
-            severity: Severity::High,
-            arch: program
-                .objects
-                .iter()
-                .map(|o| o.arch.label())
-                .collect::<Vec<_>>()
-                .join(" + "),
-            trail: vec![TrailStep {
-                function: "(data section)".into(),
-                addr: 0,
-                evidence,
-            }],
-            supersedes: vec![],
-        })
     }
+    for (_, g) in graphs {
+        for f in g.functions.values() {
+            for s in &f.stack_strings {
+                if let Some(label) = crate::decode::notable(s)
+                    && seen.insert(s.clone())
+                {
+                    evidence.push(Evidence::String(format!("[hidden · stack string · {label}] {s}")));
+                }
+            }
+        }
+    }
+
+    if evidence.is_empty() {
+        return None;
+    }
+    Some(Finding {
+        id: "obfuscated-indicators".into(),
+        title: "Hides suspicious strings (XOR or stack-constructed)".into(),
+        severity: Severity::High,
+        arch: program.objects.iter().map(|o| o.arch.label()).collect::<Vec<_>>().join(" + "),
+        trail: vec![TrailStep { function: "(data section)".into(), addr: 0, evidence }],
+        supersedes: vec![],
+    })
 }
 
 /// Flags executable sections whose bytes are near-random, which is what packed
