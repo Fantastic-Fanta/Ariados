@@ -2,6 +2,9 @@
 name = "ariados"
 version = "0.1.0"
 edition = "2024"
+description = "Static binary triage with evidence trails (Mach-O/ELF/PE)"
+license = "MIT"
+repository = ""
 
 [dependencies]
 anyhow = "1.0.104"
