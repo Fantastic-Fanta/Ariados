@@ -172,3 +172,19 @@ fn detection_regression_suite() {
         clean.verdict
     );
 }
+
+#[test]
+fn yara_gen_produces_a_specific_rule() {
+    let p = format!(
+        "{}/tests/fixtures/stealer_arm64",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let r = ariados::yaragen::generate(std::path::Path::new(&p), &[]).expect("generate");
+    assert!(r.matched_sample, "rule must match its own sample");
+    assert!(
+        r.clean_hits.is_empty(),
+        "rule matched clean binaries: {:?}",
+        r.clean_hits
+    );
+    assert!(r.rule.contains("rule ariados_auto_"));
+}

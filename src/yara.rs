@@ -64,6 +64,28 @@ impl YaraEngine {
         })
     }
 
+    /// Compiles a single rule source, returning the error message on failure
+    /// (used to validate generated rules).
+    pub fn from_source(src: &str) -> Result<YaraEngine, String> {
+        let mut compiler = yara_x::Compiler::new();
+        compiler.add_source(src).map_err(|e| e.to_string())?;
+        Ok(YaraEngine {
+            rules: compiler.build(),
+        })
+    }
+
+    /// Returns the names of rules that match `data` (no finding plumbing).
+    pub fn matching(&self, data: &[u8]) -> Vec<String> {
+        let mut scanner = yara_x::Scanner::new(&self.rules);
+        match scanner.scan(data) {
+            Ok(r) => r
+                .matching_rules()
+                .map(|m| m.identifier().to_string())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// Scans raw file bytes and returns a finding per matching rule.
     pub fn scan(&self, data: &[u8]) -> Vec<Finding> {
         let mut scanner = yara_x::Scanner::new(&self.rules);

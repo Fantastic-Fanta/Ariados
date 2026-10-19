@@ -27,6 +27,7 @@ pub mod solve;
 pub mod strings;
 pub mod supplychain;
 pub mod yara;
+pub mod yaragen;
 
 pub use error::AnalyzeError;
 pub use model::{Arch, Format, Object, Program};

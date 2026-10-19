@@ -39,6 +39,24 @@ enum Command {
         #[arg(long)]
         no_yara: bool,
     },
+    /// Explain a binary in plain language: scan it, then have an LLM turn the
+    /// evidence into an analyst's assessment. Configure a provider via
+    /// LLM_PROVIDER/LLM_API_KEY (or ~/Ariados/.env).
+    Explain {
+        /// The binary to explain.
+        path: PathBuf,
+    },
+    /// Generate a YARA rule from a sample and validate it against clean files.
+    YaraGen {
+        /// The sample to generate a rule from.
+        path: PathBuf,
+        /// Directories of known-clean binaries to validate against.
+        #[arg(long = "clean", num_args = 1..)]
+        clean: Vec<PathBuf>,
+        /// Write the rule to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Scan a directory for supply-chain risks: install scripts that fetch and
     /// run code, npm/MCP configs that launch remote commands, and prompt
     /// injection in agent/skill files.
@@ -112,6 +130,8 @@ fn main() -> ExitCode {
             yara,
             no_yara,
         } => cmd_scan(&path, json, md, verdict_only, yara, no_yara),
+        Command::Explain { path } => cmd_explain(&path),
+        Command::YaraGen { path, clean, out } => cmd_yara_gen(&path, &clean, out.as_deref()),
         Command::Supplychain { path, json } => cmd_supplychain(&path, json),
         Command::Audit { all } => cmd_audit(all),
         Command::Strings {
@@ -256,6 +276,92 @@ fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCod
         level,
     );
     ExitCode::SUCCESS
+}
+
+fn cmd_explain(path: &std::path::Path) -> ExitCode {
+    if let Some(home) = std::env::var_os("HOME") {
+        ariados::llm::load_dotenv(&std::path::Path::new(&home).join("Ariados/.env"));
+    }
+    ariados::llm::load_dotenv(std::path::Path::new(".env"));
+
+    let engine = Engine::builtin();
+    let report = match engine.scan_file(path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error scanning {}: {e}", path.display());
+            return ExitCode::from(4);
+        }
+    };
+    let evidence = ariados::report::render_text(&report);
+
+    let system = "You are a malware analyst. You are given the automated static-analysis \
+        report of a binary: a verdict, and findings each backed by the functions, strings \
+        and library calls that triggered them. Write a short, plain-language assessment for \
+        an incident responder: what this program most likely does, how concerned to be, and \
+        the first things to check or confirm. Base your assessment only on the evidence \
+        provided; call out what is uncertain. Do not invent capabilities not in the report.";
+
+    match ariados::llm::Provider::from_env() {
+        Ok(p) => {
+            eprintln!("asking {} ({})…", p.name, p.model);
+            match p.complete(system, &evidence) {
+                Ok(answer) => {
+                    println!("{answer}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("LLM error: {e}");
+                    ExitCode::from(4)
+                }
+            }
+        }
+        Err(e) => {
+            // No provider: still useful — print the structured evidence.
+            print!("{evidence}");
+            eprintln!("\n(LLM not configured: {e} — showing the raw report.)");
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn cmd_yara_gen(
+    path: &std::path::Path,
+    clean: &[PathBuf],
+    out: Option<&std::path::Path>,
+) -> ExitCode {
+    let result = match ariados::yaragen::generate(path, clean) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("yara-gen: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Some(out) = out {
+        if let Err(e) = std::fs::write(out, &result.rule) {
+            eprintln!("cannot write {}: {e}", out.display());
+            return ExitCode::from(2);
+        }
+        println!("wrote rule to {}", out.display());
+    } else {
+        println!("{}", result.rule);
+    }
+    // Validation summary to stderr so stdout stays a clean rule.
+    eprintln!("— validation —");
+    eprintln!("  strings used: {}", result.strings_used);
+    eprintln!(
+        "  matches the sample: {}",
+        if result.matched_sample { "yes" } else { "NO" }
+    );
+    if result.clean_hits.is_empty() {
+        eprintln!("  matched no clean binaries: specific ✓");
+    } else {
+        eprintln!("  ALSO matched clean binaries (too generic):");
+        for h in &result.clean_hits {
+            eprintln!("    - {h}");
+        }
+    }
+    let ok = result.matched_sample && result.clean_hits.is_empty();
+    ExitCode::from(if ok { 0 } else { 1 })
 }
 
 fn cmd_supplychain(path: &std::path::Path, json: bool) -> ExitCode {
