@@ -163,8 +163,17 @@ pub fn load_dotenv(path: &std::path::Path) {
         }
         if let Some((k, v)) = line.split_once('=') {
             let k = k.trim();
-            let v = v.trim().trim_matches('"').trim_matches('\'');
-            if std::env::var(k).is_err() {
+            let mut v = v.trim();
+            // Strip an inline comment on unquoted values (e.g. `KEY=val # note`),
+            // which is why a `.env` copied from the example with comments on the
+            // value lines would otherwise fold the comment into the value.
+            if !v.starts_with('"') && !v.starts_with('\'') {
+                if let Some(h) = v.find('#') {
+                    v = v[..h].trim_end();
+                }
+            }
+            let v = v.trim_matches('"').trim_matches('\'');
+            if !v.is_empty() && std::env::var(k).is_err() {
                 // SAFETY: single-threaded startup, before any threads spawn.
                 unsafe { std::env::set_var(k, v) };
             }
