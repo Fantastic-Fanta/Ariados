@@ -62,7 +62,10 @@ impl Engine {
         let mut arches_with: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (arch, g) in &graphs {
             for f in self.rules.match_graph(g, arch) {
-                arches_with.entry(f.id.clone()).or_default().push(arch.clone());
+                arches_with
+                    .entry(f.id.clone())
+                    .or_default()
+                    .push(arch.clone());
                 merged.entry(f.id.clone()).or_insert(f);
             }
         }
@@ -163,7 +166,9 @@ fn hidden_string_finding(
                 if let Some(label) = crate::decode::notable(s)
                     && seen.insert(s.clone())
                 {
-                    evidence.push(Evidence::String(format!("[hidden · stack string · {label}] {s}")));
+                    evidence.push(Evidence::String(format!(
+                        "[hidden · stack string · {label}] {s}"
+                    )));
                 }
             }
         }
@@ -176,8 +181,17 @@ fn hidden_string_finding(
         id: "obfuscated-indicators".into(),
         title: "Hides suspicious strings (XOR or stack-constructed)".into(),
         severity: Severity::High,
-        arch: program.objects.iter().map(|o| o.arch.label()).collect::<Vec<_>>().join(" + "),
-        trail: vec![TrailStep { function: "(data section)".into(), addr: 0, evidence }],
+        arch: program
+            .objects
+            .iter()
+            .map(|o| o.arch.label())
+            .collect::<Vec<_>>()
+            .join(" + "),
+        trail: vec![TrailStep {
+            function: "(data section)".into(),
+            addr: 0,
+            evidence,
+        }],
         supersedes: vec![],
     })
 }

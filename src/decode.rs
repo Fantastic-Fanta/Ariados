@@ -150,6 +150,25 @@ pub fn xor_indicators(obj: &Object) -> Vec<HiddenIndicator> {
     out
 }
 
+/// True if the string contains an `http(s)://` URL with an actual host after
+/// the scheme. A bare `https://` (common as a stack-built scheme prefix in
+/// ordinary apps) is not an indicator on its own.
+fn has_url_with_host(l: &str) -> bool {
+    for scheme in ["http://", "https://"] {
+        if let Some(pos) = l.find(scheme) {
+            let after = &l[pos + scheme.len()..];
+            if after
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphanumeric())
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// If a decoded string looks like a malware indicator, returns a short label.
 /// Used to turn hidden-string recovery into a finding, since a *hidden*
 /// suspicious string is a much stronger signal than a plaintext one.
@@ -159,7 +178,7 @@ pub fn xor_indicators(obj: &Object) -> Vec<HiddenIndicator> {
 /// megabytes of a real app's data, producing false "hidden string" findings.
 pub fn notable(s: &str) -> Option<&'static str> {
     let l = s.to_ascii_lowercase();
-    if l.contains("http://") || l.contains("https://") {
+    if has_url_with_host(&l) {
         Some("URL")
     } else if l.contains("osascript") || l.contains("do shell script") || l.contains("/bin/sh -c") {
         Some("shell/script command")

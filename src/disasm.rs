@@ -35,15 +35,32 @@ pub struct Xref {
     pub stack_strings: Vec<String>,
 }
 
-/// Returns true for the stack/frame pointer registers stack strings are built
-/// relative to.
-fn is_stack_reg(r: &str) -> bool {
-    matches!(r, "rbp" | "rsp" | "ebp" | "esp" | "sp" | "x29")
+/// Sign-extends the low `bits` of `value` to a full 64-bit two's-complement.
+fn sign_extend(value: u64, bits: u32) -> u64 {
+    let shift = 64 - bits;
+    (((value << shift) as i64) >> shift) as u64
 }
+
+/// Extracts the integer register id from a Reg operand, allocation-free.
+fn reg_id(op: &arm64::Arm64OperandType) -> Option<u16> {
+    match op {
+        arm64::Arm64OperandType::Reg(r) => Some(r.0),
+        _ => None,
+    }
+}
+
+const NO_REG: u16 = u16::MAX;
+const REG_TABLE: usize = 768;
 
 pub struct Disassembler {
     cs: Capstone,
     arch: Arch,
+    /// Register id of the instruction pointer (x86 RIP), or `NO_REG`.
+    rip: u16,
+    /// Register ids of the stack/frame pointers, resolved once so the hot loop
+    /// compares integers instead of allocating a `String` per operand via
+    /// capstone's `reg_name`.
+    stack_regs: [u16; 6],
 }
 
 impl Disassembler {
@@ -67,23 +84,53 @@ impl Disassembler {
             Arch::Unsupported => return Err(AnalyzeError::Unsupported("architecture".into())),
         };
         let cs = cs.map_err(|e| AnalyzeError::Disasm(e.to_string()))?;
-        Ok(Disassembler { cs, arch })
+
+        // Resolve the register ids we care about by name, once. capstone's
+        // register ids are small and dense, so a short scan covers them.
+        let mut rip = NO_REG;
+        let mut stack_regs = [NO_REG; 6];
+        let mut si = 0;
+        for id in 1u16..REG_TABLE as u16 {
+            let Some(name) = cs.reg_name(RegId(id)) else {
+                continue;
+            };
+            match name.as_str() {
+                "rip" | "eip" => rip = id,
+                "rbp" | "rsp" | "ebp" | "esp" | "sp" | "x29" if si < stack_regs.len() => {
+                    stack_regs[si] = id;
+                    si += 1;
+                }
+                _ => {}
+            }
+        }
+        Ok(Disassembler {
+            cs,
+            arch,
+            rip,
+            stack_regs,
+        })
+    }
+
+    fn is_stack(&self, id: u16) -> bool {
+        id != NO_REG && self.stack_regs.contains(&id)
     }
 
     /// Disassembles `[start, start+bytes.len())` and extracts references.
     /// `obj` supplies the address→name and address→string maps.
     pub fn xref_range(&self, obj: &Object, start: u64, bytes: &[u8]) -> Xref {
+        // arm64 is fixed-width; a hand decoder of the few instruction classes we
+        // care about is ~100x faster than capstone and gives identical results.
+        if self.arch == Arch::Aarch64 {
+            return self.arm64_xref(obj, start, bytes);
+        }
+        // x86 only (arm64 took the fast path above). x86 is variable-length, so
+        // capstone does the decoding; `slots` collects stack-string bytes.
         let mut out = Xref::default();
         let Ok(insns) = self.cs.disasm_all(bytes, start) else {
             return out;
         };
-
-        // arm64: remembers the page address an `adrp` last wrote to a register.
-        let mut adrp_page: HashMap<String, u64> = HashMap::new();
-        // Stack-string state: bytes stored at (base register, offset), and the
-        // last immediate moved into each register (arm64 stores go via a reg).
-        let mut slots: std::collections::BTreeMap<(String, i64), u8> = std::collections::BTreeMap::new();
-        let mut regval: HashMap<String, u64> = HashMap::new();
+        let mut slots: std::collections::BTreeMap<(u16, i64), u8> =
+            std::collections::BTreeMap::new();
 
         for insn in insns.iter() {
             let mnem = insn.mnemonic().unwrap_or("");
@@ -92,137 +139,33 @@ impl Disassembler {
                 continue;
             };
             let arch_detail = detail.arch_detail();
-
-            match self.arch {
-                Arch::X86_64 | Arch::X86 => {
-                    let Some(x) = arch_detail.x86() else { continue };
-                    let ops: Vec<_> = x.operands().collect();
-                    for op in &ops {
-                        match &op.op_type {
-                            x86::X86OperandType::Imm(target) if mnem == "call" || mnem == "jmp" => {
-                                self.record_call(obj, *target as u64, &mut out);
-                            }
-                            x86::X86OperandType::Mem(mem) => {
-                                let base = self.cs.reg_name(mem.base()).unwrap_or_default();
-                                if base == "rip" {
-                                    let ea = next.wrapping_add(mem.disp() as u64);
-                                    self.record_data(obj, ea, &mut out);
-                                }
-                            }
-                            _ => {}
+            let Some(x) = arch_detail.x86() else { continue };
+            let is_mov = mnem.starts_with("mov");
+            let mut stack_mem: Option<(u16, i64, u8)> = None;
+            let mut stack_imm: Option<i64> = None;
+            for op in x.operands() {
+                match &op.op_type {
+                    x86::X86OperandType::Imm(target) if mnem == "call" || mnem == "jmp" => {
+                        self.record_call(obj, *target as u64, &mut out);
+                    }
+                    x86::X86OperandType::Imm(v) if is_mov => stack_imm = Some(*v),
+                    x86::X86OperandType::Mem(mem) => {
+                        let base = mem.base().0;
+                        if base == self.rip {
+                            let ea = next.wrapping_add(mem.disp() as u64);
+                            self.record_data(obj, ea, &mut out);
+                        } else if is_mov && self.is_stack(base) {
+                            stack_mem = Some((base, mem.disp(), op.size));
                         }
                     }
-                    // Stack string: `mov [rbp/rsp + disp], imm` stores `size`
-                    // bytes of a constant to a stack slot.
-                    if mnem.starts_with("mov") {
-                        let mem = ops.iter().find_map(|o| match &o.op_type {
-                            x86::X86OperandType::Mem(m) => Some((m, o.size)),
-                            _ => None,
-                        });
-                        let imm = ops.iter().find_map(|o| match &o.op_type {
-                            x86::X86OperandType::Imm(v) => Some(*v),
-                            _ => None,
-                        });
-                        if let (Some((m, size)), Some(v)) = (mem, imm) {
-                            let base = self.cs.reg_name(m.base()).unwrap_or_default();
-                            if is_stack_reg(&base) && (1..=8).contains(&size) {
-                                write_bytes(&mut slots, &base, m.disp(), v as u64, size as usize);
-                            }
-                        }
-                    }
+                    _ => {}
                 }
-                Arch::Aarch64 => {
-                    let Some(a) = arch_detail.arm64() else {
-                        continue;
-                    };
-                    let ops: Vec<_> = a.operands().collect();
-                    match mnem {
-                        "bl" | "b" => {
-                            if let Some(arm64::Arm64OperandType::Imm(t)) =
-                                ops.first().map(|o| o.op_type.clone())
-                            {
-                                self.record_call(obj, t as u64, &mut out);
-                            }
-                        }
-                        "adrp" => {
-                            if let (Some(dst), Some(arm64::Arm64OperandType::Imm(page))) = (
-                                ops.first().and_then(|o| self.reg(&o.op_type)),
-                                ops.get(1).map(|o| o.op_type.clone()),
-                            ) {
-                                adrp_page.insert(dst, page as u64);
-                            }
-                        }
-                        "add" => {
-                            // add dst, src, #imm — combine with src's adrp page.
-                            if let (Some(src), Some(arm64::Arm64OperandType::Imm(imm))) = (
-                                ops.get(1).and_then(|o| self.reg(&o.op_type)),
-                                ops.get(2).map(|o| o.op_type.clone()),
-                            ) && let Some(page) = adrp_page.get(&src)
-                            {
-                                self.record_data(obj, page.wrapping_add(imm as u64), &mut out);
-                            }
-                        }
-                        m if m.starts_with("ldr") => {
-                            // ldr dst, [base, #off] — base may hold an adrp page.
-                            if let Some(arm64::Arm64OperandType::Mem(mem)) =
-                                ops.get(1).map(|o| o.op_type.clone())
-                                && let Some(base) = self.cs.reg_name(mem.base())
-                                && let Some(page) = adrp_page.get(&base)
-                            {
-                                self.record_data(
-                                    obj,
-                                    page.wrapping_add(mem.disp() as u64),
-                                    &mut out,
-                                );
-                            }
-                        }
-                        "mov" | "movz" => {
-                            // Load an immediate into a register (later spilled).
-                            if let (Some(d), Some(arm64::Arm64OperandType::Imm(v))) = (
-                                ops.first().and_then(|o| self.reg(&o.op_type)),
-                                ops.get(1).map(|o| o.op_type.clone()),
-                            ) {
-                                regval.insert(d, v as u64);
-                            }
-                        }
-                        "movk" => {
-                            // Merge a 16-bit immediate into the register.
-                            if let (Some(d), Some(arm64::Arm64OperandType::Imm(v))) = (
-                                ops.first().and_then(|o| self.reg(&o.op_type)),
-                                ops.get(1).map(|o| o.op_type.clone()),
-                            ) {
-                                let cur = regval.get(&d).copied().unwrap_or(0);
-                                regval.insert(d, cur | v as u64);
-                            }
-                        }
-                        m if m.starts_with("str") || m.starts_with("stur") => {
-                            // Spill a register (or zero) to a stack slot.
-                            let src = ops.first().and_then(|o| self.reg(&o.op_type));
-                            if let Some(arm64::Arm64OperandType::Mem(mem)) =
-                                ops.get(1).map(|o| o.op_type.clone())
-                                && let Some(base) = self.cs.reg_name(mem.base())
-                                && is_stack_reg(&base)
-                            {
-                                let width = if m.starts_with("strb") {
-                                    1
-                                } else if m.starts_with("strh") {
-                                    2
-                                } else if src.as_deref().is_some_and(|r| r.starts_with('x')) {
-                                    8
-                                } else {
-                                    4
-                                };
-                                let val = match src.as_deref() {
-                                    Some("wzr") | Some("xzr") | None => 0,
-                                    Some(r) => regval.get(r).copied().unwrap_or(0),
-                                };
-                                write_bytes(&mut slots, &base, mem.disp() as i64, val, width);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Arch::Unsupported => {}
+            }
+            // Stack string: `mov [rbp/rsp + disp], imm`.
+            if let (Some((base, disp, size)), Some(v)) = (stack_mem, stack_imm)
+                && (1..=8).contains(&size)
+            {
+                write_bytes(&mut slots, base, disp, v as u64, size as usize);
             }
         }
 
@@ -246,7 +189,7 @@ impl Disassembler {
         let Ok(insns) = self.cs.disasm_all(bytes, start) else {
             return out;
         };
-        let mut adrp_page: HashMap<String, u64> = HashMap::new();
+        let mut adrp_page: HashMap<u16, u64> = HashMap::new();
         for insn in insns.iter() {
             let mnem = insn.mnemonic().unwrap_or("");
             let ops = insn.op_str().unwrap_or("");
@@ -261,9 +204,7 @@ impl Disassembler {
                             x86::X86OperandType::Imm(t) if mnem == "call" || mnem == "jmp" => {
                                 annotate(obj, *t as u64, &mut note);
                             }
-                            x86::X86OperandType::Mem(mem)
-                                if self.cs.reg_name(mem.base()).as_deref() == Some("rip") =>
-                            {
+                            x86::X86OperandType::Mem(mem) if mem.base().0 == self.rip => {
                                 annotate(obj, next.wrapping_add(mem.disp() as u64), &mut note);
                             }
                             _ => {}
@@ -274,33 +215,32 @@ impl Disassembler {
                     match mnem {
                         "bl" | "b" => {
                             if let Some(arm64::Arm64OperandType::Imm(t)) =
-                                o.first().map(|x| x.op_type.clone())
+                                o.first().map(|x| &x.op_type)
                             {
-                                annotate(obj, t as u64, &mut note);
+                                annotate(obj, *t as u64, &mut note);
                             }
                         }
                         "adrp" => {
                             if let (Some(d), Some(arm64::Arm64OperandType::Imm(p))) = (
-                                o.first().and_then(|x| self.reg(&x.op_type)),
-                                o.get(1).map(|x| x.op_type.clone()),
+                                o.first().and_then(|x| reg_id(&x.op_type)),
+                                o.get(1).map(|x| &x.op_type),
                             ) {
-                                adrp_page.insert(d, p as u64);
+                                adrp_page.insert(d, *p as u64);
                             }
                         }
                         "add" => {
                             if let (Some(s), Some(arm64::Arm64OperandType::Imm(i))) = (
-                                o.get(1).and_then(|x| self.reg(&x.op_type)),
-                                o.get(2).map(|x| x.op_type.clone()),
+                                o.get(1).and_then(|x| reg_id(&x.op_type)),
+                                o.get(2).map(|x| &x.op_type),
                             ) && let Some(p) = adrp_page.get(&s)
                             {
-                                annotate(obj, p.wrapping_add(i as u64), &mut note);
+                                annotate(obj, p.wrapping_add(*i as u64), &mut note);
                             }
                         }
                         m if m.starts_with("ldr") => {
                             if let Some(arm64::Arm64OperandType::Mem(mem)) =
                                 o.get(1).map(|x| x.op_type.clone())
-                                && let Some(base) = self.cs.reg_name(mem.base())
-                                && let Some(p) = adrp_page.get(&base)
+                                && let Some(p) = adrp_page.get(&mem.base().0)
                             {
                                 annotate(obj, p.wrapping_add(mem.disp() as u64), &mut note);
                             }
@@ -320,11 +260,87 @@ impl Disassembler {
         out
     }
 
-    fn reg(&self, op: &arm64::Arm64OperandType) -> Option<String> {
-        match op {
-            arm64::Arm64OperandType::Reg(r) => self.cs.reg_name(*r),
-            _ => None,
+    /// Fast arm64 cross-referencing: decode the fixed 4-byte instructions by
+    /// hand instead of invoking capstone. Handles exactly the classes that
+    /// produce cross-references — `bl`/`b` (calls), `adrp`+`add`/`ldr` (data and
+    /// import refs), and `movz`/`movk`+`str` (stack strings) — matching the
+    /// capstone path's output.
+    fn arm64_xref(&self, obj: &Object, start: u64, bytes: &[u8]) -> Xref {
+        let mut out = Xref::default();
+        // Per-register state (ids 0..31; 31 = sp/zr depending on instruction).
+        let mut page = [0u64; 32]; // adrp page per register
+        let mut page_valid = 0u32; // bitmask of which `page[r]` are set
+        let mut regval = [0u64; 32]; // last immediate moved into a register
+        let mut slots: std::collections::BTreeMap<(u16, i64), u8> =
+            std::collections::BTreeMap::new();
+
+        let mut addr = start;
+        let mut i = 0;
+        while i + 4 <= bytes.len() {
+            let w = u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+
+            if w & 0xFC00_0000 == 0x9400_0000 || w & 0xFC00_0000 == 0x1400_0000 {
+                // bl / b imm26
+                let off = sign_extend((w & 0x03FF_FFFF) as u64, 26) << 2;
+                self.record_call(obj, addr.wrapping_add(off), &mut out);
+            } else if w & 0x9F00_0000 == 0x9000_0000 {
+                // adrp Rd, imm
+                let immlo = ((w >> 29) & 0x3) as u64;
+                let immhi = ((w >> 5) & 0x7_FFFF) as u64;
+                let imm = sign_extend((immhi << 2) | immlo, 21) << 12;
+                let rd = (w & 0x1F) as usize;
+                page[rd] = (addr & !0xFFF).wrapping_add(imm);
+                page_valid |= 1 << rd;
+            } else if w & 0x7F00_0000 == 0x1100_0000 {
+                // add Rd, Rn, #imm  (ADD immediate, op=0 S=0)
+                let rn = ((w >> 5) & 0x1F) as usize;
+                if page_valid & (1 << rn) != 0 {
+                    let sh = if (w >> 22) & 1 == 1 { 12 } else { 0 };
+                    let imm = (((w >> 10) & 0xFFF) as u64) << sh;
+                    self.record_data(obj, page[rn].wrapping_add(imm), &mut out);
+                }
+            } else if w & 0x3F00_0000 == 0x3900_0000 {
+                // load/store, unsigned offset (integer)
+                let size = (w >> 30) & 0x3;
+                let is_load = (w >> 22) & 0x3 != 0;
+                let imm = (((w >> 10) & 0xFFF) as u64) << size;
+                let rn = ((w >> 5) & 0x1F) as usize;
+                let rt = (w & 0x1F) as usize;
+                if is_load {
+                    if page_valid & (1 << rn) != 0 {
+                        self.record_data(obj, page[rn].wrapping_add(imm), &mut out);
+                    }
+                } else if rn == 31 || rn == 29 {
+                    // store to stack: recover a constant byte run
+                    let width = 1usize << size;
+                    let val = if rt == 31 { 0 } else { regval[rt] };
+                    write_bytes(&mut slots, rn as u16, imm as i64, val, width);
+                }
+            } else if w & 0x1F80_0000 == 0x1280_0000 {
+                // movz / movk (wide immediate)
+                let opc = (w >> 29) & 0x3;
+                let shift = (((w >> 21) & 0x3) * 16) as u64;
+                let imm16 = ((w >> 5) & 0xFFFF) as u64;
+                let rd = (w & 0x1F) as usize;
+                if opc == 0b10 {
+                    regval[rd] = imm16 << shift; // movz
+                } else if opc == 0b11 {
+                    regval[rd] = (regval[rd] & !(0xFFFFu64 << shift)) | (imm16 << shift); // movk
+                }
+            }
+
+            addr = addr.wrapping_add(4);
+            i += 4;
         }
+
+        out.strings.sort();
+        out.strings.dedup();
+        out.imports.sort();
+        out.imports.dedup();
+        out.calls.sort_unstable();
+        out.calls.dedup();
+        out.stack_strings = reassemble(&slots, 6);
+        out
     }
 
     /// A direct branch target: an import stub, or a local function to link in
@@ -357,26 +373,23 @@ impl Disassembler {
 
 /// Writes `width` little-endian bytes of `val` into the slot map at `disp`.
 fn write_bytes(
-    slots: &mut std::collections::BTreeMap<(String, i64), u8>,
-    base: &str,
+    slots: &mut std::collections::BTreeMap<(u16, i64), u8>,
+    base: u16,
     disp: i64,
     val: u64,
     width: usize,
 ) {
     for i in 0..width.min(8) {
         let byte = (val >> (i * 8)) as u8;
-        slots.insert((base.to_string(), disp + i as i64), byte);
+        slots.insert((base, disp + i as i64), byte);
     }
 }
 
 /// Walks slot bytes in offset order (per base register), splitting on gaps and
 /// NULs, and returns printable runs of at least `min_len`.
-fn reassemble(
-    slots: &std::collections::BTreeMap<(String, i64), u8>,
-    min_len: usize,
-) -> Vec<String> {
+fn reassemble(slots: &std::collections::BTreeMap<(u16, i64), u8>, min_len: usize) -> Vec<String> {
     let mut out = Vec::new();
-    let mut cur_base: Option<&str> = None;
+    let mut cur_base: Option<u16> = None;
     let mut prev_off: Option<i64> = None;
     let mut run: Vec<u8> = Vec::new();
 
@@ -390,8 +403,8 @@ fn reassemble(
         run.clear();
     };
 
-    for ((base, off), &byte) in slots {
-        let contiguous = cur_base == Some(base.as_str()) && prev_off == Some(off - 1);
+    for (&(base, off), &byte) in slots {
+        let contiguous = cur_base == Some(base) && prev_off == Some(off - 1);
         if !contiguous {
             flush(&mut run, &mut out);
         }
@@ -400,8 +413,8 @@ fn reassemble(
         } else {
             flush(&mut run, &mut out);
         }
-        cur_base = Some(base.as_str());
-        prev_off = Some(*off);
+        cur_base = Some(base);
+        prev_off = Some(off);
     }
     flush(&mut run, &mut out);
     out
@@ -445,7 +458,7 @@ pub fn discover_functions(obj: &Object) -> Vec<u64> {
         let Ok(insns) = dis.cs.disasm_all(&sec.bytes, sec.vaddr) else {
             continue;
         };
-        let mut adrp_page: HashMap<String, u64> = HashMap::new();
+        let mut adrp_page: HashMap<u16, u64> = HashMap::new();
         for insn in insns.iter() {
             let mnem = insn.mnemonic().unwrap_or("");
             let next = insn.address().wrapping_add(insn.len() as u64);
@@ -462,8 +475,7 @@ pub fn discover_functions(obj: &Object) -> Vec<u64> {
                             candidate = Some(*v as u64)
                         }
                         x86::X86OperandType::Mem(mem)
-                            if mnem == "lea"
-                                && dis.cs.reg_name(mem.base()).as_deref() == Some("rip") =>
+                            if mnem == "lea" && mem.base().0 == dis.rip =>
                         {
                             candidate = Some(next.wrapping_add(mem.disp() as u64));
                         }
@@ -475,26 +487,26 @@ pub fn discover_functions(obj: &Object) -> Vec<u64> {
                 match mnem {
                     "bl" => {
                         if let Some(arm64::Arm64OperandType::Imm(v)) =
-                            ops.first().map(|o| o.op_type.clone())
+                            ops.first().map(|o| &o.op_type)
                         {
-                            candidate = Some(v as u64);
+                            candidate = Some(*v as u64);
                         }
                     }
                     "adrp" => {
                         if let (Some(d), Some(arm64::Arm64OperandType::Imm(p))) = (
-                            ops.first().and_then(|o| dis.reg(&o.op_type)),
-                            ops.get(1).map(|o| o.op_type.clone()),
+                            ops.first().and_then(|o| reg_id(&o.op_type)),
+                            ops.get(1).map(|o| &o.op_type),
                         ) {
-                            adrp_page.insert(d, p as u64);
+                            adrp_page.insert(d, *p as u64);
                         }
                     }
                     "add" => {
                         if let (Some(s), Some(arm64::Arm64OperandType::Imm(i))) = (
-                            ops.get(1).and_then(|o| dis.reg(&o.op_type)),
-                            ops.get(2).map(|o| o.op_type.clone()),
+                            ops.get(1).and_then(|o| reg_id(&o.op_type)),
+                            ops.get(2).map(|o| &o.op_type),
                         ) && let Some(p) = adrp_page.get(&s)
                         {
-                            candidate = Some(p.wrapping_add(i as u64));
+                            candidate = Some(p.wrapping_add(*i as u64));
                         }
                     }
                     _ => {}
@@ -540,7 +552,7 @@ pub fn resolve_stub_names(obj: &mut Object) {
         };
         let mut stub_start = sec.vaddr;
         let mut candidate: Option<String> = None;
-        let mut adrp_page: HashMap<String, u64> = HashMap::new();
+        let mut adrp_page: HashMap<u16, u64> = HashMap::new();
 
         for insn in insns.iter() {
             let mnem = insn.mnemonic().unwrap_or("");
@@ -550,7 +562,7 @@ pub fn resolve_stub_names(obj: &mut Object) {
                 if let Some(x) = ad.x86() {
                     for op in x.operands() {
                         if let x86::X86OperandType::Mem(mem) = &op.op_type
-                            && dis.cs.reg_name(mem.base()).as_deref() == Some("rip")
+                            && mem.base().0 == dis.rip
                         {
                             let ea = next.wrapping_add(mem.disp() as u64);
                             if let Some(n) = obj.import_slots.get(&ea) {
@@ -562,16 +574,15 @@ pub fn resolve_stub_names(obj: &mut Object) {
                     let ops: Vec<_> = a.operands().collect();
                     if mnem == "adrp" {
                         if let (Some(dst), Some(arm64::Arm64OperandType::Imm(page))) = (
-                            ops.first().and_then(|o| dis.reg(&o.op_type)),
-                            ops.get(1).map(|o| o.op_type.clone()),
+                            ops.first().and_then(|o| reg_id(&o.op_type)),
+                            ops.get(1).map(|o| &o.op_type),
                         ) {
-                            adrp_page.insert(dst, page as u64);
+                            adrp_page.insert(dst, *page as u64);
                         }
                     } else if mnem.starts_with("ldr")
                         && let Some(arm64::Arm64OperandType::Mem(mem)) =
                             ops.get(1).map(|o| o.op_type.clone())
-                        && let Some(base) = dis.cs.reg_name(mem.base())
-                        && let Some(page) = adrp_page.get(&base)
+                        && let Some(page) = adrp_page.get(&mem.base().0)
                     {
                         let ea = page.wrapping_add(mem.disp() as u64);
                         if let Some(n) = obj.import_slots.get(&ea) {

@@ -184,7 +184,9 @@ fn cmd_strings(path: &std::path::Path, min: usize, hidden_only: bool) -> ExitCod
         for f in g.functions.values() {
             for s in &f.stack_strings {
                 if seen2.insert(s.clone()) {
-                    let mark = ariados::decode::notable(s).map(|l| format!("  <-- {l}")).unwrap_or_default();
+                    let mark = ariados::decode::notable(s)
+                        .map(|l| format!("  <-- {l}"))
+                        .unwrap_or_default();
                     println!("[{:#x}]  {s}{mark}", f.addr);
                 }
             }

@@ -78,5 +78,8 @@ pub fn build(obj: &Object) -> Graph {
         .flatten()
         .collect();
 
-    Graph { arch: obj.arch, functions }
+    Graph {
+        arch: obj.arch,
+        functions,
+    }
 }
