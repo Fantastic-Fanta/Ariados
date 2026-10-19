@@ -39,6 +39,13 @@ enum Command {
         #[arg(long)]
         no_yara: bool,
     },
+    /// Audit macOS persistence (LaunchAgents/Daemons, cron, shell profiles) for
+    /// unsigned or dropper-like items. Read-only.
+    Audit {
+        /// Show every item, including signed ones that look fine.
+        #[arg(long)]
+        all: bool,
+    },
     /// List plaintext strings and XOR-decoded hidden strings in a binary.
     Strings {
         /// File to inspect.
@@ -95,6 +102,7 @@ fn main() -> ExitCode {
             yara,
             no_yara,
         } => cmd_scan(&path, json, md, verdict_only, yara, no_yara),
+        Command::Audit { all } => cmd_audit(all),
         Command::Strings {
             path,
             min,
@@ -237,6 +245,60 @@ fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCod
         level,
     );
     ExitCode::SUCCESS
+}
+
+fn cmd_audit(all: bool) -> ExitCode {
+    use ariados::audit::Level;
+    let items = ariados::audit::audit();
+    let suspicious = items
+        .iter()
+        .filter(|i| i.level >= Level::Suspicious)
+        .count();
+    let flagged = items.iter().filter(|i| i.level >= Level::Notable).count();
+    println!("ariados audit — macOS persistence & trust\n");
+    if items.is_empty() {
+        println!("No persistence items found.");
+        return ExitCode::SUCCESS;
+    }
+    let shown: Vec<_> = items
+        .iter()
+        .filter(|i| all || i.level >= Level::Notable)
+        .collect();
+    for i in shown {
+        let dot = match i.level {
+            Level::Suspicious => "●",
+            Level::Notable => "◆",
+            Level::Ok => "○",
+        };
+        let lvl = match i.level {
+            Level::Suspicious => "SUSPICIOUS",
+            Level::Notable => "notable",
+            Level::Ok => "ok",
+        };
+        println!("{dot} {lvl:<11} {}  ({})", i.label, i.kind);
+        println!("   {}", i.detail);
+        println!("   {}", i.source.display());
+        for r in &i.reasons {
+            println!("   - {r}");
+        }
+        println!();
+    }
+    println!(
+        "{} persistence item(s): {suspicious} suspicious, {} notable, {} ok.",
+        items.len(),
+        flagged - suspicious,
+        items.len() - flagged
+    );
+    if !all && flagged < items.len() {
+        println!("(signed/ok items hidden; pass --all to see them)");
+    }
+    ExitCode::from(if suspicious > 0 {
+        2
+    } else if flagged > 0 {
+        1
+    } else {
+        0
+    })
 }
 
 fn cmd_scan(

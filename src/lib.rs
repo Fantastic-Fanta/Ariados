@@ -7,6 +7,7 @@
 //! thin CLI over this library.
 
 pub mod analysis;
+pub mod audit;
 pub mod byteutil;
 pub mod decode;
 pub mod diff;
