@@ -32,11 +32,17 @@ impl Engine {
         let data = std::fs::read(path)?;
         let mut program = crate::formats::parse(&data)?;
 
-        // ELF/PE: name PLT/IAT thunks before building the graph so calls to
-        // them resolve. Mach-O stubs are already named during parsing.
-        if program.format != Format::MachO {
-            for obj in &mut program.objects {
+        for obj in &mut program.objects {
+            // ELF/PE: name PLT/IAT thunks before anything else so calls to them
+            // resolve. Mach-O stubs are already named during parsing.
+            if program.format != Format::MachO {
                 resolve_stub_names(obj);
+            }
+            // Recover functions for stripped binaries (always the case for PE).
+            // Skip when the symbol table / function-starts already gave plenty,
+            // so the common Mach-O/ELF path stays fast.
+            if program.format == Format::Pe || obj.functions.len() < 16 {
+                obj.functions = crate::disasm::discover_functions(obj);
             }
         }
 

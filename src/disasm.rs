@@ -182,6 +182,87 @@ impl Disassembler {
     }
 }
 
+/// Recursive-descent function discovery: starting from known entry points,
+/// follows direct `call`/`bl` targets to find functions that a stripped binary
+/// has no symbols for. Essential for PE (usually symbol-free) and helpful for
+/// any stripped Mach-O/ELF. Returns the expanded, sorted function-start list.
+pub fn discover_functions(obj: &Object) -> Vec<u64> {
+    let Ok(dis) = Disassembler::new(obj.arch) else { return obj.functions.clone() };
+    let mut known: std::collections::BTreeSet<u64> = obj.functions.iter().copied().collect();
+    if obj.entry != 0 {
+        known.insert(obj.entry);
+    }
+
+    // Linearly sweep every code section, collecting anything that looks like a
+    // function start: a direct `call`/`bl` target, or a computed code pointer
+    // (`lea`/`adrp+add`), which catches callbacks and `main` that are only ever
+    // referenced by address, never called directly.
+    for sec in obj.code_sections() {
+        let Ok(insns) = dis.cs.disasm_all(&sec.bytes, sec.vaddr) else { continue };
+        let mut adrp_page: HashMap<String, u64> = HashMap::new();
+        for insn in insns.iter() {
+            let mnem = insn.mnemonic().unwrap_or("");
+            let next = insn.address().wrapping_add(insn.len() as u64);
+            let Ok(detail) = dis.cs.insn_detail(insn) else { continue };
+            let ad = detail.arch_detail();
+
+            let mut candidate: Option<u64> = None;
+            if let Some(x) = ad.x86() {
+                for op in x.operands() {
+                    match &op.op_type {
+                        x86::X86OperandType::Imm(v) if mnem == "call" => candidate = Some(*v as u64),
+                        x86::X86OperandType::Mem(mem)
+                            if mnem == "lea" && dis.cs.reg_name(mem.base()).as_deref() == Some("rip") =>
+                        {
+                            candidate = Some(next.wrapping_add(mem.disp() as u64));
+                        }
+                        _ => {}
+                    }
+                }
+            } else if let Some(a) = ad.arm64() {
+                let ops: Vec<_> = a.operands().collect();
+                match mnem {
+                    "bl" => {
+                        if let Some(arm64::Arm64OperandType::Imm(v)) = ops.first().map(|o| o.op_type.clone()) {
+                            candidate = Some(v as u64);
+                        }
+                    }
+                    "adrp" => {
+                        if let (Some(d), Some(arm64::Arm64OperandType::Imm(p))) =
+                            (ops.first().and_then(|o| dis.reg(&o.op_type)), ops.get(1).map(|o| o.op_type.clone()))
+                        {
+                            adrp_page.insert(d, p as u64);
+                        }
+                    }
+                    "add" => {
+                        if let (Some(s), Some(arm64::Arm64OperandType::Imm(i))) =
+                            (ops.get(1).and_then(|o| dis.reg(&o.op_type)), ops.get(2).map(|o| o.op_type.clone()))
+                        {
+                            if let Some(p) = adrp_page.get(&s) {
+                                candidate = Some(p.wrapping_add(i as u64));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(t) = candidate {
+                // Only addresses inside a code section, not already an import stub.
+                if obj.names.get(&t).map(|n| n.kind) != Some(NameKind::Import)
+                    && obj.section_at(t).map(|s| s.kind) == Some(crate::model::SectionKind::Code)
+                {
+                    known.insert(t);
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<u64> = known.into_iter().collect();
+    out.sort_unstable();
+    out
+}
+
 /// Attributes ELF/PE PLT/IAT thunks to the import they jump through, so a
 /// `call <plt stub>` in real code resolves to the library name.
 ///
