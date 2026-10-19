@@ -32,6 +32,12 @@ enum Command {
         /// Print only the verdict line.
         #[arg(long)]
         verdict_only: bool,
+        /// Directory of YARA rules (.yar/.yara) to use instead of the bundled set.
+        #[arg(long)]
+        yara: Option<PathBuf>,
+        /// Disable YARA scanning.
+        #[arg(long)]
+        no_yara: bool,
     },
     /// List plaintext strings and XOR-decoded hidden strings in a binary.
     Strings {
@@ -86,7 +92,9 @@ fn main() -> ExitCode {
             json,
             md,
             verdict_only,
-        } => cmd_scan(&path, json, md, verdict_only),
+            yara,
+            no_yara,
+        } => cmd_scan(&path, json, md, verdict_only, yara, no_yara),
         Command::Strings {
             path,
             min,
@@ -231,8 +239,26 @@ fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCod
     ExitCode::SUCCESS
 }
 
-fn cmd_scan(path: &std::path::Path, json: bool, md: bool, verdict_only: bool) -> ExitCode {
-    let engine = Engine::builtin();
+fn cmd_scan(
+    path: &std::path::Path,
+    json: bool,
+    md: bool,
+    verdict_only: bool,
+    yara: Option<PathBuf>,
+    no_yara: bool,
+) -> ExitCode {
+    let mut engine = Engine::builtin();
+    if no_yara {
+        engine.set_yara(None);
+    } else if let Some(dir) = &yara {
+        match ariados::yara::YaraEngine::from_dir(dir) {
+            Some(y) => engine.set_yara(Some(y)),
+            None => {
+                eprintln!("no usable YARA rules in {}", dir.display());
+                return ExitCode::from(2);
+            }
+        }
+    }
     let targets = collect_targets(path);
     if targets.is_empty() {
         eprintln!("no executable files found at {}", path.display());

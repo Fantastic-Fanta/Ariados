@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 pub struct Engine {
     rules: Rules,
     policy: Policy,
+    /// Optional YARA engine. Matches become findings alongside behavioral ones.
+    yara: Option<crate::yara::YaraEngine>,
     /// Ask the OS (`codesign`/`spctl`) for richer signing info. Off during bulk
     /// eval, where it would be thousands of subprocesses.
     pub enrich_signing: bool,
@@ -26,15 +28,23 @@ impl Engine {
         Engine {
             rules: Rules::builtin(),
             policy: Policy::builtin(),
+            yara: crate::yara::YaraEngine::builtin(),
             enrich_signing: true,
             decode_hidden: true,
         }
+    }
+
+    /// Replaces the YARA engine (e.g. with rules loaded from `--yara <dir>`),
+    /// or disables it with `None`.
+    pub fn set_yara(&mut self, yara: Option<crate::yara::YaraEngine>) {
+        self.yara = yara;
     }
 
     pub fn with_rules(rules: Rules, policy: Policy) -> Engine {
         Engine {
             rules,
             policy,
+            yara: crate::yara::YaraEngine::builtin(),
             enrich_signing: true,
             decode_hidden: true,
         }
@@ -90,6 +100,11 @@ impl Engine {
         // sign the real code is compressed/encrypted and unpacked at runtime.
         if let Some(f) = packing_finding(&program) {
             findings.push(f);
+        }
+
+        // YARA signature matches over the raw file bytes.
+        if let Some(yara) = &self.yara {
+            findings.extend(yara.scan(&data));
         }
 
         // Drop findings that a stronger present finding supersedes.

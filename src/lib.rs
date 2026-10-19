@@ -24,6 +24,7 @@ pub mod rules;
 pub mod scan;
 pub mod solve;
 pub mod strings;
+pub mod yara;
 
 pub use error::AnalyzeError;
 pub use model::{Arch, Format, Object, Program};

@@ -11,6 +11,8 @@ ariados scan ./suspicious
 ariados scan /Applications/Some.app --json
 ariados scan ./suspicious --md > report.md
 ariados scan ./suspicious --verdict-only
+ariados scan ./suspicious --yara ~/yara-rules   # use a directory of YARA rules
+ariados scan ./suspicious --no-yara
 ```
 
 Exit codes: `0` clean, `1` low-risk, `2` suspicious, `3` highly suspicious —

@@ -17,6 +17,11 @@ file ─▶ parse ─▶ disassemble ─▶ cross-reference graph ─▶ match r
    strings/imports that triggered it: the evidence trail.
 4. **Policy** turns findings into a verdict with a transparent weighted score.
 
+Alongside the behavioral engine, Ariados runs **YARA** rules (via the pure-Rust
+`yara-x`) over the raw file bytes; a match becomes a finding, with severity and
+description from the rule's `meta`. A small set ships in `rules/yara/`; point it
+at community rule sets with `--yara <dir>`.
+
 Detection content lives in [`../rules/`](../rules/) (TOML), separate from the
 engine, so rules and scoring tune without touching code.
 

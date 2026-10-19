@@ -127,3 +127,14 @@ fn new_rules_detect_dropper_wallet_gatekeeper() {
     assert!(has_finding(&r, "curl-pipe-shell"), "{:?}", r.findings);
     assert!(has_finding(&r, "gatekeeper-disable"), "{:?}", r.findings);
 }
+
+#[test]
+fn yara_bundled_rules_match_stealer() {
+    let r = scan("stealer_arm64");
+    // The bundled YARA rules (fake prompt + browser credential paths) fire.
+    assert!(
+        r.findings.iter().any(|f| f.id.starts_with("yara:")),
+        "no yara findings: {:?}",
+        r.findings
+    );
+}

@@ -21,3 +21,4 @@ thiserror = "2.0.21"
 toml = "1.1.8"
 ureq = { version = "3.4.2", features = ["json"] }
 walkdir = "2.5.0"
+yara-x = "1.21.0"

@@ -69,7 +69,9 @@ impl Policy {
     /// which legit DRM/anti-tamper use and which false-matches easily) is not
     /// enough to flag a binary tied to a verified developer identity.
     fn anomalous_even_when_trusted(id: &str) -> bool {
-        matches!(id, "obfuscated-indicators" | "packed-code")
+        // YARA matches are explicit signatures the user opted into, so they
+        // stay authoritative even on a signed binary.
+        matches!(id, "obfuscated-indicators" | "packed-code") || id.starts_with("yara:")
     }
 
     /// Computes the verdict. `trusted` means the OS accepted the signature
