@@ -64,3 +64,49 @@ detection rate against a malware corpus (point that only inside a VM).
 ariados eval
 ariados eval --benign /usr/bin --malicious /path/in/vm --flag-at low
 ```
+
+## explain
+
+Scan a binary, then have an LLM turn the evidence into a plain-language
+assessment for a responder. Needs a provider (see `solve`); falls back to the
+raw report when none is configured.
+
+```bash
+ariados explain ./suspicious
+```
+
+## yara-gen
+
+Generate a YARA rule from a sample's most distinctive strings, then **validate**
+it: the rule must match the sample and none of a set of known-clean binaries. A
+too-generic rule is reported rather than shipped.
+
+```bash
+ariados yara-gen ./sample                 # rule to stdout, validation to stderr
+ariados yara-gen ./sample --out sample.yar
+ariados yara-gen ./sample --clean /usr/bin
+```
+
+## supplychain
+
+Scan a directory for text-borne risks the binary scanner can't see: install
+scripts that pipe a download into a shell, npm `preinstall`/`postinstall` hooks
+that run code, MCP server configs launching remote commands, and prompt
+injection / exfiltration phrasing in agent skill and rules files.
+
+```bash
+ariados supplychain ./some-project
+ariados supplychain ./some-project --json
+```
+
+## audit
+
+Audit macOS persistence — LaunchAgents/Daemons, cron and shell profiles —
+resolving what each one runs and flagging the odd ones (temp/hidden locations
+or fetch-and-run commands are suspicious; unsigned/unresolved programs are
+notable). Read-only. Shows flagged items by default; `--all` for everything.
+
+```bash
+ariados audit
+ariados audit --all
+```

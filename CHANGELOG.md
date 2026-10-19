@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+- **`explain`** — LLM turns a scan's evidence into a plain-language analyst
+  assessment (grounded in the findings; falls back to the raw report).
+- **`yara-gen`** — generate a YARA rule from a sample's distinctive strings and
+  validate it: must match the sample, must not match a clean set.
+- **`supplychain`** — scan a directory for install-script droppers, npm
+  lifecycle hooks, MCP server configs running remote commands, and prompt
+  injection in agent/skill files.
+- **`audit`** — macOS persistence & trust auditor (LaunchAgents/Daemons, cron,
+  shell profiles), tuned for low noise.
+- **CI** — GitHub Actions (fmt, clippy, tests) with a detection-regression suite.
+
+
 ## 0.1.0
 
 First release. A static binary triage tool for Mach-O, ELF and PE.

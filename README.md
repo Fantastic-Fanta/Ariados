@@ -1,5 +1,7 @@
 # Ariados
 
+[![CI](https://github.com/Fantastic-Fanta/Ariados/actions/workflows/ci.yml/badge.svg)](https://github.com/Fantastic-Fanta/Ariados/actions/workflows/ci.yml)
+
 A static binary triage tool. Point it at a Mach-O, ELF or PE executable (or a
 `.app` bundle) and it reports what the program *does* that looks dangerous —
 and shows the exact code, strings and library calls that prove it.
@@ -29,8 +31,13 @@ Or grab the prebuilt macOS (arm64) binary from the
 or clone and `cargo build --release`.
 
 ```bash
-ariados scan ./suspicious
-ariados scan ./suspicious --yara ~/yara-rules
+ariados scan ./suspicious               # triage a binary (evidence trails)
+ariados scan ./suspicious --yara ~/rules
+ariados explain ./suspicious            # LLM analyst assessment
+ariados yara-gen ./sample               # generate + validate a YARA rule
+ariados diff ./official ./downloaded    # tampering check
+ariados supplychain ./project           # install scripts, npm/MCP, agent configs
+ariados audit                           # macOS persistence & trust
 ```
 
 ## Documentation

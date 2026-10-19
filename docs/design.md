@@ -25,6 +25,16 @@ at community rule sets with `--yara <dir>`.
 Detection content lives in [`../rules/`](../rules/) (TOML), separate from the
 engine, so rules and scoring tune without touching code.
 
+## Beyond binary scanning
+
+The same evidence-first idea extends past executables: `audit` checks macOS
+persistence (LaunchAgents/Daemons, cron, shell profiles) for unsigned or
+fetch-and-run items; `supplychain` scans a directory for install-script
+droppers, npm lifecycle hooks, MCP server configs running remote commands, and
+prompt injection in agent/skill files; `yara-gen` builds a YARA rule from a
+sample and validates it against clean files; `explain` turns the findings into a
+plain-language analyst assessment via an LLM.
+
 ## Accuracy
 
 `ariados eval` over ~960 system binaries: ~2.9% false positives at the default
@@ -42,6 +52,10 @@ flag count from ~37 to a handful, all unsigned apps.
 ## Limitations
 
 - No data-flow analysis; chained behaviors use a short call-graph reach.
+- Static only. Strings obfuscated at runtime (custom decoder loops, runtime-
+  derived keys) need an emulator (Unicorn-grade) to recover; that dynamic
+  deobfuscation pass is the main planned frontier. Compile-time-folded and
+  single-byte/stack obfuscation are already recovered statically.
 - Hidden strings: single-byte XOR and stack-constructed only. Multi-byte XOR and
   emulation-recovered strings are future work.
 - PE function names stay `sub_<addr>` (stripped); imports still resolve via IAT.
