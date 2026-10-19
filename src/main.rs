@@ -26,6 +26,17 @@ enum Command {
         #[arg(long)]
         verdict_only: bool,
     },
+    /// List plaintext strings and XOR-decoded hidden strings in a binary.
+    Strings {
+        /// File to inspect.
+        path: PathBuf,
+        /// Minimum string length.
+        #[arg(long, default_value_t = 6)]
+        min: usize,
+        /// Only show XOR-decoded (hidden) strings.
+        #[arg(long)]
+        hidden_only: bool,
+    },
     /// Measure accuracy against benign (and optionally malicious) corpora.
     Eval {
         /// Benign directories (default: system binary dirs). Flagging any of
@@ -45,8 +56,43 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Scan { path, json, verdict_only } => cmd_scan(&path, json, verdict_only),
+        Command::Strings { path, min, hidden_only } => cmd_strings(&path, min, hidden_only),
         Command::Eval { benign, malicious, flag_at } => cmd_eval(&benign, &malicious, &flag_at),
     }
+}
+
+fn cmd_strings(path: &std::path::Path, min: usize, hidden_only: bool) -> ExitCode {
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("cannot read {}: {e}", path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let program = match ariados::formats::parse(&data) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("parse error: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    if !hidden_only {
+        println!("# plaintext strings");
+        for s in ariados::strings::extract(&data, min) {
+            println!("{:#010x}  {}", s.offset, s.text);
+        }
+    }
+    println!("\n# hidden (single-byte XOR) strings");
+    let mut seen = std::collections::BTreeSet::new();
+    for obj in &program.objects {
+        for h in ariados::decode::xor_strings(obj, min) {
+            if seen.insert((h.key, h.text.clone())) {
+                let mark = ariados::decode::notable(&h.text).map(|l| format!("  <-- {l}")).unwrap_or_default();
+                println!("[{}+{:#x} XOR {:#04x}]  {}{mark}", h.section, h.offset, h.key, h.text);
+            }
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCode {
@@ -69,6 +115,7 @@ fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCod
 
     let mut engine = Engine::builtin();
     engine.enrich_signing = false; // avoid thousands of codesign subprocesses
+    engine.decode_hidden = false; // the XOR sweep would dominate a bulk run
     ariados::eval::report(&engine, &benign_refs, &malicious_refs, level);
     ExitCode::SUCCESS
 }

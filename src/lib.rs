@@ -8,6 +8,7 @@
 
 pub mod analysis;
 pub mod byteutil;
+pub mod decode;
 pub mod disasm;
 pub mod entropy;
 pub mod error;

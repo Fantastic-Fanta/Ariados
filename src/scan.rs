@@ -16,15 +16,18 @@ pub struct Engine {
     /// Ask the OS (`codesign`/`spctl`) for richer signing info. Off during bulk
     /// eval, where it would be thousands of subprocesses.
     pub enrich_signing: bool,
+    /// Brute-force single-byte XOR strings. Off during bulk eval, where the
+    /// 255-key sweep over every data section would dominate runtime.
+    pub decode_hidden: bool,
 }
 
 impl Engine {
     pub fn builtin() -> Engine {
-        Engine { rules: Rules::builtin(), policy: Policy::builtin(), enrich_signing: true }
+        Engine { rules: Rules::builtin(), policy: Policy::builtin(), enrich_signing: true, decode_hidden: true }
     }
 
     pub fn with_rules(rules: Rules, policy: Policy) -> Engine {
-        Engine { rules, policy, enrich_signing: true }
+        Engine { rules, policy, enrich_signing: true, decode_hidden: true }
     }
 
     /// Scans one binary file and produces a report.
@@ -68,6 +71,14 @@ impl Engine {
                 f
             })
             .collect();
+        // Hidden strings: a suspicious string that was XOR-obfuscated is a much
+        // stronger signal than a plaintext one, so it gets its own finding.
+        if self.decode_hidden {
+            if let Some(f) = self.hidden_string_finding(&program) {
+                findings.push(f);
+            }
+        }
+
         // Drop findings that a stronger present finding supersedes.
         let superseded: std::collections::BTreeSet<String> =
             findings.iter().flat_map(|f| f.supersedes.iter().cloned()).collect();
@@ -93,6 +104,39 @@ impl Engine {
             signing_detail,
             findings,
             verdict,
+        })
+    }
+}
+
+impl Engine {
+    /// Builds a finding from XOR-obfuscated strings that decode to indicators,
+    /// de-duplicating across fat-binary slices.
+    fn hidden_string_finding(&self, program: &crate::model::Program) -> Option<Finding> {
+        use crate::analysis::{Evidence, TrailStep};
+        let mut seen = std::collections::BTreeSet::new();
+        let mut evidence = Vec::new();
+        for obj in &program.objects {
+            for h in crate::decode::xor_strings(obj, 6) {
+                if let Some(label) = crate::decode::notable(&h.text) {
+                    if seen.insert(h.text.clone()) {
+                        evidence.push(Evidence::String(format!(
+                            "[hidden · XOR key {:#04x} · {label}] {}",
+                            h.key, h.text
+                        )));
+                    }
+                }
+            }
+        }
+        if evidence.is_empty() {
+            return None;
+        }
+        Some(Finding {
+            id: "obfuscated-indicators".into(),
+            title: "Hides suspicious strings with single-byte XOR".into(),
+            severity: Severity::High,
+            arch: program.objects.iter().map(|o| o.arch.label()).collect::<Vec<_>>().join(" + "),
+            trail: vec![TrailStep { function: "(data section)".into(), addr: 0, evidence }],
+            supersedes: vec![],
         })
     }
 }
