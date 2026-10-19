@@ -127,8 +127,9 @@ see the effect.
 
 - **No data-flow analysis.** Chained behaviors use a short call-graph reach, not
   taint tracking, so they're a heuristic.
-- **Hidden strings**: single-byte XOR only. Stack-constructed strings need an
-  emulator (à la Mandiant FLOSS) — not yet implemented.
+- **Hidden strings**: single-byte XOR plus stack-constructed strings (recovered
+  by static constant tracking, no emulator). Multi-byte XOR and
+  emulation-recovered strings (à la Mandiant FLOSS) are future work.
 - **PE** is the weakest format: Windows binaries are stripped, so functions are
   recovered by a code sweep rather than a symbol table. Imports now resolve
   through the IAT, so call-based findings work, but function *names* stay
