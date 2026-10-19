@@ -1,0 +1,24 @@
+# Scoring policy. Deliberately separate from detection: the rules decide what
+# is *true* about a binary, this file decides how alarmed to be about it. Tune
+# the verdict here without touching any detection logic.
+
+[weights]
+high = 50
+medium = 15
+low = 4
+info = 1
+
+# A finding seen in several architecture slices of a fat binary is the same
+# behavior; count each finding id only once toward the score.
+count_each_finding_once = true
+
+[modifiers]
+# Added once if the binary is unsigned and has at least one finding. Unsigned
+# alone is common and not suspicious, so it only nudges an already-flagged file.
+unsigned_with_findings = 10
+
+[thresholds]
+# Lowest score (inclusive) that reaches each level. Below low_risk is Clean.
+low_risk = 1
+suspicious = 20
+highly_suspicious = 55

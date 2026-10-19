@@ -19,7 +19,11 @@ pub struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     pub fn new(data: &'a [u8], little: bool) -> Self {
-        Reader { data, pos: 0, little }
+        Reader {
+            data,
+            pos: 0,
+            little,
+        }
     }
 
     pub fn at(data: &'a [u8], pos: usize, little: bool) -> Self {
@@ -31,14 +35,17 @@ impl<'a> Reader<'a> {
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let end = self
-            .pos
-            .checked_add(n)
-            .ok_or(AnalyzeError::Truncated { want: n, at: self.pos })?;
+        let end = self.pos.checked_add(n).ok_or(AnalyzeError::Truncated {
+            want: n,
+            at: self.pos,
+        })?;
         let slice = self
             .data
             .get(self.pos..end)
-            .ok_or(AnalyzeError::Truncated { want: n, at: self.pos })?;
+            .ok_or(AnalyzeError::Truncated {
+                want: n,
+                at: self.pos,
+            })?;
         self.pos = end;
         Ok(slice)
     }
@@ -50,13 +57,21 @@ impl<'a> Reader<'a> {
     pub fn u16(&mut self) -> Result<u16> {
         let b = self.take(2)?;
         let a = [b[0], b[1]];
-        Ok(if self.little { u16::from_le_bytes(a) } else { u16::from_be_bytes(a) })
+        Ok(if self.little {
+            u16::from_le_bytes(a)
+        } else {
+            u16::from_be_bytes(a)
+        })
     }
 
     pub fn u32(&mut self) -> Result<u32> {
         let b = self.take(4)?;
         let a = [b[0], b[1], b[2], b[3]];
-        Ok(if self.little { u32::from_le_bytes(a) } else { u32::from_be_bytes(a) })
+        Ok(if self.little {
+            u32::from_le_bytes(a)
+        } else {
+            u32::from_be_bytes(a)
+        })
     }
 
     pub fn i32(&mut self) -> Result<i32> {
@@ -67,7 +82,11 @@ impl<'a> Reader<'a> {
         let b = self.take(8)?;
         let mut a = [0u8; 8];
         a.copy_from_slice(b);
-        Ok(if self.little { u64::from_le_bytes(a) } else { u64::from_be_bytes(a) })
+        Ok(if self.little {
+            u64::from_le_bytes(a)
+        } else {
+            u64::from_be_bytes(a)
+        })
     }
 
     pub fn skip(&mut self, n: usize) -> Result<()> {

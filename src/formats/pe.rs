@@ -7,9 +7,9 @@
 
 use crate::error::AnalyzeError;
 use crate::model::*;
+use goblin::pe::PE;
 use goblin::pe::header::{COFF_MACHINE_ARM64, COFF_MACHINE_X86, COFF_MACHINE_X86_64};
 use goblin::pe::section_table::{IMAGE_SCN_CNT_CODE, IMAGE_SCN_MEM_EXECUTE};
-use goblin::pe::PE;
 use std::collections::BTreeMap;
 
 type Result<T> = std::result::Result<T, AnalyzeError>;
@@ -29,10 +29,17 @@ pub fn parse(data: &[u8]) -> Result<Vec<Object>> {
     for s in &pe.sections {
         let name = s.name().unwrap_or("").to_string();
         let is_code = s.characteristics & (IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE) != 0;
-        let kind = if is_code { SectionKind::Code } else { SectionKind::Data };
+        let kind = if is_code {
+            SectionKind::Code
+        } else {
+            SectionKind::Data
+        };
         let start = s.pointer_to_raw_data as usize;
         let raw = s.size_of_raw_data as usize;
-        let bytes = data.get(start..start.saturating_add(raw)).map(|b| b.to_vec()).unwrap_or_default();
+        let bytes = data
+            .get(start..start.saturating_add(raw))
+            .map(|b| b.to_vec())
+            .unwrap_or_default();
         sections.push(Section {
             name,
             segment: String::new(),
@@ -50,16 +57,21 @@ pub fn parse(data: &[u8]) -> Result<Vec<Object>> {
         let addr = image_base + e.rva as u64;
         functions.push(addr);
         if let Some(n) = e.name {
-            names.entry(addr).or_insert(NamedAddr { name: n.to_string(), kind: NameKind::LocalFunction });
+            names.entry(addr).or_insert(NamedAddr {
+                name: n.to_string(),
+                kind: NameKind::LocalFunction,
+            });
         }
     }
     let entry = image_base + pe.entry as u64;
     functions.push(entry);
 
-    // Import slots: each import's `rva` is its IAT thunk address.
+    // Import slots: the IAT entry's RVA is goblin's `offset` field (import
+    // address table RVA + index*ptr size). Its `rva` field is the hint/name
+    // table RVA instead, which is not where code loads the pointer from.
     let mut import_slots: BTreeMap<u64, String> = BTreeMap::new();
     for imp in &pe.imports {
-        import_slots.insert(image_base + imp.rva as u64, imp.name.to_string());
+        import_slots.insert(image_base + imp.offset as u64, imp.name.to_string());
     }
 
     functions.sort_unstable();

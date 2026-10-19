@@ -141,13 +141,33 @@ impl Object {
         self.sections.iter().filter(|s| s.kind == SectionKind::Code)
     }
 
+    /// Returns the raw bytes of the function starting at `start`, bounded by the
+    /// next function start in the same code section. Shared by disassembly,
+    /// stack-string recovery and the solver.
+    pub fn function_bytes(&self, start: u64) -> Option<&[u8]> {
+        let sec = self.section_at(start)?;
+        if sec.kind != SectionKind::Code {
+            return None;
+        }
+        let sec_end = sec.vaddr + sec.size;
+        let end = self
+            .functions
+            .iter()
+            .copied()
+            .find(|&f| f > start && f <= sec_end)
+            .unwrap_or(sec_end);
+        let off = (start - sec.vaddr) as usize;
+        let end_off = (end - sec.vaddr) as usize;
+        sec.bytes.get(off..end_off.min(sec.bytes.len()))
+    }
+
     /// Resolves an address referenced by code to an imported function name,
     /// whether the address is an import stub or a pointer slot.
     pub fn import_at(&self, vaddr: u64) -> Option<&str> {
-        if let Some(n) = self.names.get(&vaddr) {
-            if n.kind == NameKind::Import {
-                return Some(&n.name);
-            }
+        if let Some(n) = self.names.get(&vaddr)
+            && n.kind == NameKind::Import
+        {
+            return Some(&n.name);
         }
         self.import_slots.get(&vaddr).map(|s| s.as_str())
     }
@@ -167,7 +187,10 @@ impl Object {
         let raw = &bytes[..end];
         // Only accept mostly-printable runs; random data pointed at by a LEA
         // shouldn't be reported as a "string".
-        let printable = raw.iter().filter(|&&b| b == b'\t' || (0x20..=0x7e).contains(&b)).count();
+        let printable = raw
+            .iter()
+            .filter(|&&b| b == b'\t' || (0x20..=0x7e).contains(&b))
+            .count();
         if printable * 10 < raw.len() * 9 {
             return None;
         }

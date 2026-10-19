@@ -1,0 +1,43 @@
+# Changelog
+
+## 0.2.0
+
+- **`explain`** — LLM turns a scan's evidence into a plain-language analyst
+  assessment (grounded in the findings; falls back to the raw report).
+- **`yara-gen`** — generate a YARA rule from a sample's distinctive strings and
+  validate it: must match the sample, must not match a clean set.
+- **`supplychain`** — scan a directory for install-script droppers, npm
+  lifecycle hooks, MCP server configs running remote commands, and prompt
+  injection in agent/skill files.
+- **`audit`** — macOS persistence & trust auditor (LaunchAgents/Daemons, cron,
+  shell profiles), tuned for low noise.
+- **CI** — GitHub Actions (fmt, clippy, tests) with a detection-regression suite.
+
+
+## 0.1.0
+
+First release. A static binary triage tool for Mach-O, ELF and PE.
+
+### Features
+- **Evidence trails** — every finding shows the exact functions, strings and
+  library calls that prove it, not an opaque label.
+- **Formats** — Mach-O (hand-written parser with import-stub resolution), ELF
+  and PE (via goblin), including fat binaries and `.app` bundles.
+- **Analysis** — a custom arm64 decoder plus capstone for x86; a cross-reference
+  graph of strings, imports and call edges; capability + behavior rules (TOML).
+- **Hidden strings** — single-byte XOR (fast delta search) and stack-constructed
+  string recovery.
+- **Packing detection** — high-entropy executable sections.
+- **YARA** — run signatures over the raw bytes via pure-Rust `yara-x`;
+  `--yara <dir>` for community rule sets.
+- **Signing-aware verdict** — Developer ID / notarized apps aren't flagged on
+  behavioral findings alone; unsigned downloads get full scrutiny.
+- **Commands** — `scan` (text / `--json` / `--md`), `strings`, `diff`, `solve`
+  (opt-in LLM for crackmes), `eval` (measure accuracy).
+- **Fast** — parallel across files and functions; ~2.9% false positives on 959
+  system binaries, 100% detection on a harmless technique corpus.
+
+### Known limitations
+- PE function names stay `sub_<addr>` (stripped binaries).
+- No data-flow analysis; chained behaviors use a short call-graph reach.
+- Prebuilt binary is macOS arm64 only; build from source for other targets.

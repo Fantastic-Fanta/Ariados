@@ -1,47 +1,541 @@
-//! Temporary parsing harness — replaced by the real CLI once analysis lands.
+//! Ariados command-line interface.
 
+use ariados::report;
+use ariados::scan::{Engine, collect_targets};
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
+#[derive(Parser)]
+#[command(
+    name = "ariados",
+    version,
+    about = "Static binary triage with evidence trails"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Analyze a binary or .app bundle and report suspicious behavior.
+    Scan {
+        /// File or bundle to scan.
+        path: PathBuf,
+        /// Emit JSON instead of text.
+        #[arg(long)]
+        json: bool,
+        /// Emit a Markdown report instead of text.
+        #[arg(long)]
+        md: bool,
+        /// Print only the verdict line.
+        #[arg(long)]
+        verdict_only: bool,
+        /// Directory of YARA rules (.yar/.yara) to use instead of the bundled set.
+        #[arg(long)]
+        yara: Option<PathBuf>,
+        /// Disable YARA scanning.
+        #[arg(long)]
+        no_yara: bool,
+    },
+    /// Explain a binary in plain language: scan it, then have an LLM turn the
+    /// evidence into an analyst's assessment. Configure a provider via
+    /// LLM_PROVIDER/LLM_API_KEY (or ~/Ariados/.env).
+    Explain {
+        /// The binary to explain.
+        path: PathBuf,
+    },
+    /// Generate a YARA rule from a sample and validate it against clean files.
+    YaraGen {
+        /// The sample to generate a rule from.
+        path: PathBuf,
+        /// Directories of known-clean binaries to validate against.
+        #[arg(long = "clean", num_args = 1..)]
+        clean: Vec<PathBuf>,
+        /// Write the rule to this file instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Scan a directory for supply-chain risks: install scripts that fetch and
+    /// run code, npm/MCP configs that launch remote commands, and prompt
+    /// injection in agent/skill files.
+    Supplychain {
+        /// Directory to scan.
+        path: PathBuf,
+        /// Emit JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Audit macOS persistence (LaunchAgents/Daemons, cron, shell profiles) for
+    /// unsigned or dropper-like items. Read-only.
+    Audit {
+        /// Show every item, including signed ones that look fine.
+        #[arg(long)]
+        all: bool,
+    },
+    /// List plaintext strings and XOR-decoded hidden strings in a binary.
+    Strings {
+        /// File to inspect.
+        path: PathBuf,
+        /// Minimum string length.
+        #[arg(long, default_value_t = 6)]
+        min: usize,
+        /// Only show XOR-decoded (hidden) strings.
+        #[arg(long)]
+        hidden_only: bool,
+    },
+    /// Reverse a crackme: find the check function and (opt-in) ask an LLM for
+    /// the input that passes it. Configure a provider via LLM_PROVIDER/LLM_API_KEY.
+    Solve {
+        /// The crackme binary.
+        path: PathBuf,
+        /// Don't call any LLM; just show the candidate disassembly.
+        #[arg(long)]
+        no_llm: bool,
+        /// Print the prompt that would be sent, without calling anything.
+        #[arg(long)]
+        show_prompt: bool,
+    },
+    /// Compare two binaries and show behavioral differences (tampering check).
+    Diff {
+        /// Reference binary (e.g. the official copy).
+        a: PathBuf,
+        /// Binary to compare against it (e.g. a downloaded copy).
+        b: PathBuf,
+    },
+    /// Measure accuracy against benign (and optionally malicious) corpora.
+    Eval {
+        /// Benign directories (default: system binary dirs). Flagging any of
+        /// these is a false positive.
+        #[arg(long = "benign", num_args = 1..)]
+        benign: Vec<PathBuf>,
+        /// Malicious directories — only ever point these inside a VM.
+        #[arg(long = "malicious", num_args = 1..)]
+        malicious: Vec<PathBuf>,
+        /// Verdict level at which a file counts as flagged.
+        #[arg(long, default_value = "suspicious")]
+        flag_at: String,
+    },
+}
+
 fn main() -> ExitCode {
-    let path = match std::env::args().nth(1) {
-        Some(p) => p,
-        None => {
-            eprintln!("usage: ariados <binary>");
-            return ExitCode::from(2);
-        }
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Scan {
+            path,
+            json,
+            md,
+            verdict_only,
+            yara,
+            no_yara,
+        } => cmd_scan(&path, json, md, verdict_only, yara, no_yara),
+        Command::Explain { path } => cmd_explain(&path),
+        Command::YaraGen { path, clean, out } => cmd_yara_gen(&path, &clean, out.as_deref()),
+        Command::Supplychain { path, json } => cmd_supplychain(&path, json),
+        Command::Audit { all } => cmd_audit(all),
+        Command::Strings {
+            path,
+            min,
+            hidden_only,
+        } => cmd_strings(&path, min, hidden_only),
+        Command::Solve {
+            path,
+            no_llm,
+            show_prompt,
+        } => cmd_solve(&path, no_llm, show_prompt),
+        Command::Diff { a, b } => cmd_diff(&a, &b),
+        Command::Eval {
+            benign,
+            malicious,
+            flag_at,
+        } => cmd_eval(&benign, &malicious, &flag_at),
+    }
+}
+
+fn cmd_solve(path: &std::path::Path, no_llm: bool, show_prompt: bool) -> ExitCode {
+    // Load ~/Ariados/.env and ./.env so keys can live in a gitignored file.
+    if let Some(home) = std::env::var_os("HOME") {
+        ariados::llm::load_dotenv(&std::path::Path::new(&home).join("Ariados/.env"));
+    }
+    ariados::llm::load_dotenv(std::path::Path::new(".env"));
+
+    let opts = ariados::solve::Options {
+        no_llm,
+        show_prompt,
     };
-    let data = match std::fs::read(&path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("cannot read {path}: {e}");
-            return ExitCode::from(2);
-        }
-    };
-    match ariados::formats::parse(&data) {
-        Ok(prog) => {
-            println!("{} ({} bytes)  sha256={}", prog.format, prog.size, &prog.sha256[..16]);
-            for obj in &prog.objects {
-                let strings = obj.import_slots.len();
-                let imports_in_names =
-                    obj.names.values().filter(|n| n.kind == ariados::model::NameKind::Import).count();
-                println!(
-                    "  arch={:<8} entry={:#x} sections={} functions={} named={} stub-imports={} slot-imports={} libs={} signing={:?}",
-                    obj.arch.label(),
-                    obj.entry,
-                    obj.sections.len(),
-                    obj.functions.len(),
-                    obj.names.len(),
-                    imports_in_names,
-                    strings,
-                    obj.libraries.len(),
-                    obj.signing,
-                );
-            }
+    match ariados::solve::solve(path, &opts) {
+        Ok(text) => {
+            print!("{text}");
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("parse error: {e}");
-            ExitCode::from(1)
+            eprintln!("solve error: {e}");
+            ExitCode::from(4)
         }
     }
+}
+
+fn cmd_diff(a: &std::path::Path, b: &std::path::Path) -> ExitCode {
+    let engine = Engine::builtin();
+    match ariados::diff::diff(&engine, a, b) {
+        Ok(gained) => ExitCode::from(if gained { 1 } else { 0 }),
+        Err(e) => {
+            eprintln!("diff error: {e}");
+            ExitCode::from(4)
+        }
+    }
+}
+
+fn cmd_strings(path: &std::path::Path, min: usize, hidden_only: bool) -> ExitCode {
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("cannot read {}: {e}", path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let program = match ariados::formats::parse(&data) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("parse error: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    if !hidden_only {
+        println!("# plaintext strings");
+        for s in ariados::strings::extract(&data, min) {
+            println!("{:#010x}  {}", s.offset, s.text);
+        }
+    }
+    println!("\n# hidden (single-byte XOR) strings");
+    let mut seen = std::collections::BTreeSet::new();
+    for obj in &program.objects {
+        for h in ariados::decode::xor_strings(obj, min) {
+            if seen.insert((h.key, h.text.clone())) {
+                let mark = ariados::decode::notable(&h.text)
+                    .map(|l| format!("  <-- {l}"))
+                    .unwrap_or_default();
+                println!(
+                    "[{}+{:#x} XOR {:#04x}]  {}{mark}",
+                    h.section, h.offset, h.key, h.text
+                );
+            }
+        }
+    }
+
+    println!("\n# hidden (stack-constructed) strings");
+    let mut seen2 = std::collections::BTreeSet::new();
+    for obj in &program.objects {
+        let g = ariados::graph::build(obj);
+        for f in g.functions.values() {
+            for s in &f.stack_strings {
+                if seen2.insert(s.clone()) {
+                    let mark = ariados::decode::notable(s)
+                        .map(|l| format!("  <-- {l}"))
+                        .unwrap_or_default();
+                    println!("[{:#x}]  {s}{mark}", f.addr);
+                }
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCode {
+    use ariados::analysis::VerdictLevel;
+    let level = match flag_at.to_ascii_lowercase().as_str() {
+        "low" | "lowrisk" | "low_risk" => VerdictLevel::LowRisk,
+        "high" | "highly" | "highly_suspicious" => VerdictLevel::HighlySuspicious,
+        _ => VerdictLevel::Suspicious,
+    };
+
+    // Default benign corpus: the usual system binary locations.
+    let default_benign = ["/bin", "/usr/bin", "/usr/sbin", "/sbin"];
+    let benign_paths: Vec<PathBuf> = if benign.is_empty() {
+        default_benign.iter().map(PathBuf::from).collect()
+    } else {
+        benign.to_vec()
+    };
+    let benign_refs: Vec<&std::path::Path> = benign_paths.iter().map(|p| p.as_path()).collect();
+    let malicious_refs: Vec<&std::path::Path> = malicious.iter().map(|p| p.as_path()).collect();
+
+    // Benign corpus is large: skip codesign subprocesses and the XOR sweep so
+    // the run stays fast. Malicious corpus is small: run the full pipeline so
+    // obfuscation-based detections count.
+    let mut benign_engine = Engine::builtin();
+    benign_engine.enrich_signing = false;
+    benign_engine.decode_hidden = false;
+    let mut mal_engine = Engine::builtin();
+    mal_engine.enrich_signing = false; // detection, not signing, is what we measure
+    ariados::eval::report(
+        &benign_engine,
+        &mal_engine,
+        &benign_refs,
+        &malicious_refs,
+        level,
+    );
+    ExitCode::SUCCESS
+}
+
+fn cmd_explain(path: &std::path::Path) -> ExitCode {
+    if let Some(home) = std::env::var_os("HOME") {
+        ariados::llm::load_dotenv(&std::path::Path::new(&home).join("Ariados/.env"));
+    }
+    ariados::llm::load_dotenv(std::path::Path::new(".env"));
+
+    let engine = Engine::builtin();
+    let report = match engine.scan_file(path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error scanning {}: {e}", path.display());
+            return ExitCode::from(4);
+        }
+    };
+    let evidence = ariados::report::render_text(&report);
+
+    let system = "You are a malware analyst. You are given the automated static-analysis \
+        report of a binary: a verdict, and findings each backed by the functions, strings \
+        and library calls that triggered them. Write a short, plain-language assessment for \
+        an incident responder: what this program most likely does, how concerned to be, and \
+        the first things to check or confirm. Base your assessment only on the evidence \
+        provided; call out what is uncertain. Do not invent capabilities not in the report.";
+
+    match ariados::llm::Provider::from_env() {
+        Ok(p) => {
+            eprintln!("asking {} ({})…", p.name, p.model);
+            match p.complete(system, &evidence) {
+                Ok(answer) => {
+                    println!("{answer}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("LLM error: {e}");
+                    ExitCode::from(4)
+                }
+            }
+        }
+        Err(e) => {
+            // No provider: still useful — print the structured evidence.
+            print!("{evidence}");
+            eprintln!("\n(LLM not configured: {e} — showing the raw report.)");
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn cmd_yara_gen(
+    path: &std::path::Path,
+    clean: &[PathBuf],
+    out: Option<&std::path::Path>,
+) -> ExitCode {
+    let result = match ariados::yaragen::generate(path, clean) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("yara-gen: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Some(out) = out {
+        if let Err(e) = std::fs::write(out, &result.rule) {
+            eprintln!("cannot write {}: {e}", out.display());
+            return ExitCode::from(2);
+        }
+        println!("wrote rule to {}", out.display());
+    } else {
+        println!("{}", result.rule);
+    }
+    // Validation summary to stderr so stdout stays a clean rule.
+    eprintln!("— validation —");
+    eprintln!("  strings used: {}", result.strings_used);
+    eprintln!(
+        "  matches the sample: {}",
+        if result.matched_sample { "yes" } else { "NO" }
+    );
+    if result.clean_hits.is_empty() {
+        eprintln!("  matched no clean binaries: specific ✓");
+    } else {
+        eprintln!("  ALSO matched clean binaries (too generic):");
+        for h in &result.clean_hits {
+            eprintln!("    - {h}");
+        }
+    }
+    let ok = result.matched_sample && result.clean_hits.is_empty();
+    ExitCode::from(if ok { 0 } else { 1 })
+}
+
+fn cmd_supplychain(path: &std::path::Path, json: bool) -> ExitCode {
+    use ariados::supplychain::Severity;
+    let hits = ariados::supplychain::scan_dir(path);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&hits).unwrap_or_default()
+        );
+        return ExitCode::from(if hits.is_empty() { 0 } else { 1 });
+    }
+    println!("ariados supply-chain scan — {}\n", path.display());
+    if hits.is_empty() {
+        println!("No supply-chain risks found.");
+        return ExitCode::SUCCESS;
+    }
+    for h in &hits {
+        let dot = match h.severity {
+            Severity::High => "●",
+            Severity::Medium => "◆",
+            Severity::Low => "○",
+        };
+        let loc = if h.line > 0 {
+            format!("{}:{}", h.path, h.line)
+        } else {
+            h.path.clone()
+        };
+        println!("{dot} {:?}  {}  [{}]", h.severity, h.detail, h.rule);
+        println!("   {loc}");
+        println!("   {}", h.snippet);
+        println!();
+    }
+    let high = hits.iter().filter(|h| h.severity == Severity::High).count();
+    println!("{} finding(s), {high} high-severity.", hits.len());
+    ExitCode::from(if high > 0 { 2 } else { 1 })
+}
+
+fn cmd_audit(all: bool) -> ExitCode {
+    use ariados::audit::Level;
+    let items = ariados::audit::audit();
+    let suspicious = items
+        .iter()
+        .filter(|i| i.level >= Level::Suspicious)
+        .count();
+    let flagged = items.iter().filter(|i| i.level >= Level::Notable).count();
+    println!("ariados audit — macOS persistence & trust\n");
+    if items.is_empty() {
+        println!("No persistence items found.");
+        return ExitCode::SUCCESS;
+    }
+    let shown: Vec<_> = items
+        .iter()
+        .filter(|i| all || i.level >= Level::Notable)
+        .collect();
+    for i in shown {
+        let dot = match i.level {
+            Level::Suspicious => "●",
+            Level::Notable => "◆",
+            Level::Ok => "○",
+        };
+        let lvl = match i.level {
+            Level::Suspicious => "SUSPICIOUS",
+            Level::Notable => "notable",
+            Level::Ok => "ok",
+        };
+        println!("{dot} {lvl:<11} {}  ({})", i.label, i.kind);
+        println!("   {}", i.detail);
+        println!("   {}", i.source.display());
+        for r in &i.reasons {
+            println!("   - {r}");
+        }
+        println!();
+    }
+    println!(
+        "{} persistence item(s): {suspicious} suspicious, {} notable, {} ok.",
+        items.len(),
+        flagged - suspicious,
+        items.len() - flagged
+    );
+    if !all && flagged < items.len() {
+        println!("(signed/ok items hidden; pass --all to see them)");
+    }
+    ExitCode::from(if suspicious > 0 {
+        2
+    } else if flagged > 0 {
+        1
+    } else {
+        0
+    })
+}
+
+fn cmd_scan(
+    path: &std::path::Path,
+    json: bool,
+    md: bool,
+    verdict_only: bool,
+    yara: Option<PathBuf>,
+    no_yara: bool,
+) -> ExitCode {
+    let mut engine = Engine::builtin();
+    if no_yara {
+        engine.set_yara(None);
+    } else if let Some(dir) = &yara {
+        match ariados::yara::YaraEngine::from_dir(dir) {
+            Some(y) => engine.set_yara(Some(y)),
+            None => {
+                eprintln!("no usable YARA rules in {}", dir.display());
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let targets = collect_targets(path);
+    if targets.is_empty() {
+        eprintln!("no executable files found at {}", path.display());
+        return ExitCode::from(2);
+    }
+
+    // Scan targets in parallel (order preserved by rayon's indexed collect),
+    // then handle results sequentially so output and errors stay deterministic.
+    use rayon::prelude::*;
+    let outcomes: Vec<_> = targets
+        .par_iter()
+        .map(|t| (t, engine.scan_file(t)))
+        .collect();
+
+    let mut worst = 0u8;
+    let mut reports = Vec::new();
+    for (target, outcome) in outcomes {
+        match outcome {
+            Ok(r) => {
+                worst = worst.max(r.verdict.level.exit_code());
+                reports.push(r);
+            }
+            Err(e) => {
+                // A directory scan shouldn't abort because one file is odd.
+                if targets.len() == 1 {
+                    eprintln!("error scanning {}: {e}", target.display());
+                    return ExitCode::from(4);
+                }
+                eprintln!("skipping {}: {e}", target.display());
+            }
+        }
+    }
+
+    if md {
+        print!("{}", report::render_markdown(&reports));
+    } else if json {
+        let joined: Vec<_> = reports.iter().collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&joined).unwrap_or_default()
+        );
+    } else {
+        for (i, r) in reports.iter().enumerate() {
+            if i > 0 {
+                println!("\n{}\n", "─".repeat(60));
+            }
+            if verdict_only {
+                let name = std::path::Path::new(&r.path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                println!(
+                    "{}  {}  (score {})",
+                    r.verdict.level.headline(),
+                    name,
+                    r.verdict.score
+                );
+            } else {
+                print!("{}", report::render_text(r));
+            }
+        }
+    }
+
+    ExitCode::from(worst)
 }
