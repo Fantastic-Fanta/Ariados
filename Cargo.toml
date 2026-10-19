@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "Static binary triage with evidence trails (Mach-O/ELF/PE)"
 license = "MIT"
-repository = ""
+repository = "https://github.com/Fantastic-Fanta/Ariados"
+readme = "README.md"
+keywords = ["malware", "security", "reverse-engineering", "macho", "yara"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -22,3 +25,8 @@ toml = "1.1.8"
 ureq = { version = "3.4.2", features = ["json"] }
 walkdir = "2.5.0"
 yara-x = "1.21.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

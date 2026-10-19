@@ -16,9 +16,21 @@ and shows the exact code, strings and library calls that prove it.
 
 It only reads files, never runs them. Still, keep real malware in a VM.
 
+## Install
+
+Build from source (needs a Rust toolchain and a C compiler for capstone):
+
 ```bash
-cargo build --release
-./target/release/ariados scan ./suspicious
+cargo install --git https://github.com/Fantastic-Fanta/Ariados
+```
+
+Or grab the prebuilt macOS (arm64) binary from the
+[latest release](https://github.com/Fantastic-Fanta/Ariados/releases/latest),
+or clone and `cargo build --release`.
+
+```bash
+ariados scan ./suspicious
+ariados scan ./suspicious --yara ~/yara-rules
 ```
 
 ## Documentation
