@@ -20,22 +20,6 @@ file ─▶ parse ─▶ disassemble ─▶ cross-reference graph ─▶ match r
 Detection content lives in [`../rules/`](../rules/) (TOML), separate from the
 engine, so rules and scoring tune without touching code.
 
-## Reading guide
-
-Read the source in this order; each file builds on the last.
-
-| # | File | What you'll learn |
-|---|------|-------------------|
-| 1 | `src/model.rs` | The shared data model. Enums, structs, borrowing. |
-| 2 | `src/byteutil.rs` | Safe binary parsing. `Result`, slices, `?`. |
-| 3 | `src/formats/macho.rs` | Executable layout; finding imports and functions. |
-| 4 | `src/disasm.rs` | Bytes → instructions → string/call references. The core. |
-| 5 | `src/graph.rs` | Per-function evidence and call edges. |
-| 6 | `src/rules.rs` + `rules/*.toml` | Capability/behavior matching. |
-| 7 | `src/analysis.rs`, `policy.rs`, `report.rs` | Findings, scoring, rendering. |
-| 8 | `src/scan.rs` | How it all composes. |
-| 9 | `src/decode.rs`, `diff.rs`, `solve.rs`, `llm.rs` | The extra features. |
-
 ## Accuracy
 
 `ariados eval` over ~960 system binaries: ~2.9% false positives at the default

@@ -24,7 +24,7 @@ cargo build --release
 ## Documentation
 
 - [Commands](docs/commands.md)
-- [Design & reading guide](docs/design.md)
+- [Design](docs/design.md)
 
 ## License
 
