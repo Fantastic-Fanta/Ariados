@@ -9,6 +9,7 @@ Analyze a binary and report suspicious behavior with evidence trails.
 ```bash
 ariados scan ./suspicious
 ariados scan /Applications/Some.app --json
+ariados scan ./suspicious --html > report.html
 ariados scan ./suspicious --verdict-only
 ```
 
