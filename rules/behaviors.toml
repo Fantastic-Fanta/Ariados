@@ -98,3 +98,33 @@ id = "anti-analysis-env"
 severity = "low"
 title = "Fingerprints the host or checks for a virtual machine"
 capability = "env-discovery"
+
+[[behavior]]
+id = "crypto-wallet-theft"
+severity = "high"
+title = "Accesses cryptocurrency wallet files"
+capability = "crypto-wallet"
+
+[[behavior]]
+id = "messenger-data-theft"
+severity = "medium"
+title = "Accesses chat-app session/token data"
+capability = "messenger-data"
+
+[[behavior]]
+id = "gatekeeper-disable"
+severity = "high"
+title = "Attempts to disable Gatekeeper"
+capability = "gatekeeper-disable"
+
+[[behavior]]
+id = "tcc-access"
+severity = "medium"
+title = "Touches the TCC privacy database"
+capability = "tcc-access"
+
+[[behavior]]
+id = "curl-pipe-shell"
+severity = "high"
+title = "Downloads and pipes a script straight to a shell"
+capability = "shell-download"

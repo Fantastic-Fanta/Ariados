@@ -105,3 +105,36 @@ id = "env-discovery"
 strings = ["IOPlatformSerialNumber", "IOPlatformUUID", "hw\\.model",
            "(?i)vmware", "(?i)virtualbox", "(?i)parallels"]
 imports = ["gethostuuid"]
+
+[[capability]]
+id = "crypto-wallet"
+# Specific desktop-wallet files/dirs and the MetaMask extension id. Generic
+# words (keystore, Coinbase, Ledger) fire on unrelated software, so avoid them.
+strings = ["Electrum/wallets",
+           "Exodus/exodus\\.wallet",
+           "wallet\\.dat",
+           "\\.metamask",
+           "nkbihfbeagmckhabcndgmadcdanpnbho"]
+
+[[capability]]
+id = "messenger-data"
+# Session/token stores for chat apps targeted by stealers.
+strings = ["Telegram Desktop",
+           "discord/Local Storage",
+           "discordcanary",
+           "discordptb"]
+
+[[capability]]
+id = "gatekeeper-disable"
+# Turning off Gatekeeper / Mac security assessment.
+strings = ["spctl --master-disable", "--master-disable", "assessment\\.disable"]
+
+[[capability]]
+id = "tcc-access"
+# Reaching the TCC privacy database (access grants for camera, disk, etc.).
+strings = ["TCC\\.db", "com\\.apple\\.TCC"]
+
+[[capability]]
+id = "shell-download"
+# The classic one-line dropper: fetch a script and pipe it to a shell.
+strings = ["curl .*\\| *(sh|bash|zsh)", "wget .*\\| *(sh|bash)", "curl -fsSL"]

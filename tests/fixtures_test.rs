@@ -119,3 +119,11 @@ fn stack_strings_are_recovered() {
         "{joined}"
     );
 }
+
+#[test]
+fn new_rules_detect_dropper_wallet_gatekeeper() {
+    let r = scan("dropper_arm64");
+    assert!(has_finding(&r, "crypto-wallet-theft"), "{:?}", r.findings);
+    assert!(has_finding(&r, "curl-pipe-shell"), "{:?}", r.findings);
+    assert!(has_finding(&r, "gatekeeper-disable"), "{:?}", r.findings);
+}
