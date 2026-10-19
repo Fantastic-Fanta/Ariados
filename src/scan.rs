@@ -79,6 +79,12 @@ impl Engine {
             findings.push(f);
         }
 
+        // Packing: an executable section with near-random bytes is a strong
+        // sign the real code is compressed/encrypted and unpacked at runtime.
+        if let Some(f) = packing_finding(&program) {
+            findings.push(f);
+        }
+
         // Drop findings that a stronger present finding supersedes.
         let superseded: std::collections::BTreeSet<String> = findings
             .iter()
@@ -175,6 +181,52 @@ impl Engine {
     }
 }
 
+/// Flags executable sections whose bytes are near-random, which is what packed
+/// or encrypted code looks like before it unpacks itself. Normal machine code
+/// sits around 6.0–6.7 bits/byte; above ~7.2 is suspicious for a code section.
+fn packing_finding(program: &crate::model::Program) -> Option<Finding> {
+    use crate::analysis::{Evidence, TrailStep};
+    const THRESHOLD: f64 = 7.2;
+    const MIN_SIZE: usize = 2048;
+
+    let mut evidence = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for obj in &program.objects {
+        for sec in obj.code_sections() {
+            if sec.bytes.len() < MIN_SIZE {
+                continue;
+            }
+            let e = crate::entropy::shannon(&sec.bytes);
+            if e > THRESHOLD && seen.insert(sec.name.clone()) {
+                evidence.push(Evidence::String(format!(
+                    "section {} is {e:.2}/8.0 bits per byte (normal code ~6.3)",
+                    sec.name
+                )));
+            }
+        }
+    }
+    if evidence.is_empty() {
+        return None;
+    }
+    Some(Finding {
+        id: "packed-code".into(),
+        title: "Executable section looks packed or encrypted (high entropy)".into(),
+        severity: Severity::Medium,
+        arch: program
+            .objects
+            .iter()
+            .map(|o| o.arch.label())
+            .collect::<Vec<_>>()
+            .join(" + "),
+        trail: vec![TrailStep {
+            function: "(code section)".into(),
+            addr: 0,
+            evidence,
+        }],
+        supersedes: vec![],
+    })
+}
+
 /// Resolves import thunks and recovers functions so a parsed program is ready
 /// for graph building. Shared by the scan and diff paths.
 pub fn prepare(program: &mut crate::model::Program) {
@@ -259,5 +311,57 @@ fn codesign_detail(path: &Path) -> Option<String> {
         None
     } else {
         Some(bits.join(", "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Arch, Format, Object, Program, Section, SectionKind, Signing};
+    use std::collections::BTreeMap;
+
+    fn code_obj(bytes: Vec<u8>) -> Object {
+        Object {
+            arch: Arch::X86_64,
+            entry: 0,
+            little_endian: true,
+            sections: vec![Section {
+                name: "__text".into(),
+                segment: "__TEXT".into(),
+                vaddr: 0x1000,
+                size: bytes.len() as u64,
+                file_off: 0,
+                kind: SectionKind::Code,
+                bytes,
+            }],
+            functions: vec![],
+            names: BTreeMap::new(),
+            import_slots: BTreeMap::new(),
+            signing: Signing::Unsigned,
+            libraries: vec![],
+        }
+    }
+
+    fn program(obj: Object) -> Program {
+        Program {
+            format: Format::MachO,
+            sha256: "0".repeat(64),
+            size: 0,
+            objects: vec![obj],
+        }
+    }
+
+    #[test]
+    fn high_entropy_code_is_flagged_as_packed() {
+        // Uniform byte distribution => entropy 8.0, well above the threshold.
+        let bytes: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
+        assert!(packing_finding(&program(code_obj(bytes))).is_some());
+    }
+
+    #[test]
+    fn low_entropy_code_is_not_flagged() {
+        // Repetitive bytes => low entropy, like ordinary code padding.
+        let bytes = vec![0x90u8; 4096];
+        assert!(packing_finding(&program(code_obj(bytes))).is_none());
     }
 }
