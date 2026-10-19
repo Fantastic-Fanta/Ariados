@@ -291,12 +291,26 @@ fn read_head(path: &Path, n: usize) -> std::io::Result<Vec<u8>> {
 /// Best-effort richer signing summary from the macOS tools. Never fails the
 /// scan — if the tools aren't there or the file isn't signed, returns None.
 fn codesign_detail(path: &Path) -> Option<String> {
-    use std::process::Command;
-    let out = Command::new("codesign")
+    use std::process::{Command, Stdio};
+    let piped = || (Stdio::piped(), Stdio::piped());
+    // Launch both tools at once; they're independent and each costs ~100ms.
+    let (o1, e1) = piped();
+    let codesign = Command::new("codesign")
         .args(["-dv", "--verbose=2"])
         .arg(path)
-        .output()
-        .ok()?;
+        .stdout(o1)
+        .stderr(e1)
+        .spawn()
+        .ok();
+    let (o2, e2) = piped();
+    let spctl_child = Command::new("spctl")
+        .args(["-a", "-vv", "--type", "execute"])
+        .arg(path)
+        .stdout(o2)
+        .stderr(e2)
+        .spawn();
+
+    let out = codesign?.wait_with_output().ok()?;
     // codesign writes its detail to stderr.
     let text = String::from_utf8_lossy(&out.stderr);
     let mut bits = Vec::new();
@@ -310,11 +324,7 @@ fn codesign_detail(path: &Path) -> Option<String> {
         bits.insert(0, "ad-hoc signed".to_string());
     }
     // Gatekeeper assessment.
-    if let Ok(spctl) = Command::new("spctl")
-        .args(["-a", "-vv", "--type", "execute"])
-        .arg(path)
-        .output()
-    {
+    if let Ok(spctl) = spctl_child.and_then(|c| c.wait_with_output()) {
         let s = String::from_utf8_lossy(&spctl.stderr);
         if s.contains("accepted") {
             bits.push("gatekeeper: accepted".into());

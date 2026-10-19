@@ -136,17 +136,19 @@ impl Rules {
 
     /// Runs every behavior against one architecture's graph.
     pub fn match_graph(&self, g: &Graph, arch_label: &str) -> Vec<Finding> {
-        // Precompute each function's capability set for the reach search.
-        let mut capset: HashMap<u64, BTreeSet<usize>> = HashMap::new();
-        for f in g.functions.values() {
-            let mut set = BTreeSet::new();
-            for idx in 0..self.caps.len() {
-                if self.has_cap(idx, f) {
-                    set.insert(idx);
-                }
-            }
-            capset.insert(f.addr, set);
-        }
+        use rayon::prelude::*;
+        // Precompute each function's capability set (the regex/substring matching
+        // is the cost) in parallel across functions.
+        let capset: HashMap<u64, BTreeSet<usize>> = g
+            .functions
+            .par_iter()
+            .map(|(&addr, f)| {
+                let set: BTreeSet<usize> = (0..self.caps.len())
+                    .filter(|&idx| self.has_cap(idx, f))
+                    .collect();
+                (addr, set)
+            })
+            .collect();
 
         let mut findings = Vec::new();
         for b in &self.behaviors {
