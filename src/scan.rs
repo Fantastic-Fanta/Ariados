@@ -104,7 +104,13 @@ impl Engine {
             None
         };
 
-        let verdict = self.policy.verdict(&findings, signing);
+        // "Trusted" = Gatekeeper accepted the signature (notarized / Developer
+        // ID). Only known when signing was enriched (single-file scans), so a
+        // bulk eval treats everything as untrusted, as before.
+        let trusted = signing_detail
+            .as_deref()
+            .is_some_and(|d| d.contains("gatekeeper: accepted"));
+        let verdict = self.policy.verdict(&findings, signing, trusted);
 
         Ok(Report {
             path: path.display().to_string(),

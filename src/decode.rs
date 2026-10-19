@@ -79,16 +79,23 @@ pub fn xor_strings(obj: &Object, min_len: usize) -> Vec<Hidden> {
 /// If a decoded string looks like a malware indicator, returns a short label.
 /// Used to turn hidden-string recovery into a finding, since a *hidden*
 /// suspicious string is a much stronger signal than a plaintext one.
+///
+/// Indicators here must be specific and long. Short, common fragments (`.ssh`,
+/// `keychain`, `wallet`) match by chance when brute-forcing XOR keys over
+/// megabytes of a real app's data, producing false "hidden string" findings.
 pub fn notable(s: &str) -> Option<&'static str> {
     let l = s.to_ascii_lowercase();
     if l.contains("http://") || l.contains("https://") {
         Some("URL")
-    } else if l.contains("osascript") || l.contains("/bin/sh") || l.contains("/bin/bash") {
+    } else if l.contains("osascript") || l.contains("do shell script") || l.contains("/bin/sh -c") {
         Some("shell/script command")
-    } else if l.contains("launchagents") || l.contains("launchdaemons") {
+    } else if l.contains("launchagents/") || l.contains("launchdaemons/") {
         Some("persistence path")
-    } else if l.contains("login data") || l.contains("keychain") || l.contains(".ssh") {
-        Some("credential path")
+    } else if l.contains("login data")
+        || l.contains("login.keychain-db")
+        || l.contains("cookies.sqlite")
+    {
+        Some("credential store")
     } else {
         None
     }

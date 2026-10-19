@@ -63,8 +63,18 @@ impl Policy {
         }
     }
 
-    /// Computes the verdict for a set of findings.
-    pub fn verdict(&self, findings: &[Finding], signing: Signing) -> Verdict {
+    /// Findings that stay alarming even on a code-signed app, because a
+    /// legitimate developer has no reason to pack code, hide strings or evade
+    /// debuggers. Everything else (networking, keychain, persistence) is normal
+    /// app behavior and shouldn't flag a Gatekeeper-accepted binary.
+    fn anomalous_even_when_trusted(id: &str) -> bool {
+        matches!(id, "obfuscated-indicators" | "packed-code" | "anti-debug")
+    }
+
+    /// Computes the verdict. `trusted` means the OS accepted the signature
+    /// (notarized / valid Developer ID), which heavily discounts behavioral
+    /// findings — the common case that made real apps look "highly suspicious".
+    pub fn verdict(&self, findings: &[Finding], signing: Signing, trusted: bool) -> Verdict {
         let mut score = 0u32;
         if self.weights.count_each_finding_once {
             // Collapse the same finding id (same behavior across fat slices).
@@ -84,7 +94,7 @@ impl Policy {
             score += self.modifiers.unsigned_with_findings;
         }
 
-        let level = if score >= self.thresholds.highly_suspicious {
+        let mut level = if score >= self.thresholds.highly_suspicious {
             VerdictLevel::HighlySuspicious
         } else if score >= self.thresholds.suspicious {
             VerdictLevel::Suspicious
@@ -93,6 +103,19 @@ impl Policy {
         } else {
             VerdictLevel::Clean
         };
+
+        // A signature the OS accepts ties the binary to a known developer, so
+        // behavioral findings alone don't make it suspicious. Cap the level at
+        // low-risk unless something genuinely anomalous for a signed app is
+        // present (packing, hidden strings, anti-debug).
+        if trusted
+            && !findings
+                .iter()
+                .any(|f| Self::anomalous_even_when_trusted(&f.id))
+            && level > VerdictLevel::LowRisk
+        {
+            level = VerdictLevel::LowRisk;
+        }
 
         Verdict { level, score }
     }
