@@ -38,6 +38,12 @@ pub fn xor_strings(obj: &Object, min_len: usize) -> Vec<Hidden> {
         }
         let data = &sec.bytes[..sec.bytes.len().min(MAX_SECTION_SCAN)];
         for key in 1u8..=255 {
+            // 0x20 is ASCII case-flip and maps NUL→space, so it turns ordinary
+            // NUL-separated plaintext into one "decoded" run — a systematic
+            // false positive, never a real malware key. Skip it.
+            if key == 0x20 {
+                continue;
+            }
             let mut run_start = None;
             for i in 0..=data.len() {
                 let decoded_printable = data.get(i).map(|&b| is_text(b ^ key)).unwrap_or(false);
@@ -47,7 +53,7 @@ pub fn xor_strings(obj: &Object, min_len: usize) -> Vec<Hidden> {
                         if i - s >= min_len {
                             let text: String = data[s..i].iter().map(|&b| (b ^ key) as char).collect();
                             // Require some letters so we don't report runs of
-                            // decoded punctuation/whitespace.
+                            // decoded punctuation or whitespace.
                             if text.chars().filter(|c| c.is_ascii_alphabetic()).count() >= min_len / 2 {
                                 out.push(Hidden { section: sec.name.clone(), offset: s, key, text });
                             }

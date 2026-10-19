@@ -34,20 +34,7 @@ impl Engine {
     pub fn scan_file(&self, path: &Path) -> Result<Report, AnalyzeError> {
         let data = std::fs::read(path)?;
         let mut program = crate::formats::parse(&data)?;
-
-        for obj in &mut program.objects {
-            // ELF/PE: name PLT/IAT thunks before anything else so calls to them
-            // resolve. Mach-O stubs are already named during parsing.
-            if program.format != Format::MachO {
-                resolve_stub_names(obj);
-            }
-            // Recover functions for stripped binaries (always the case for PE).
-            // Skip when the symbol table / function-starts already gave plenty,
-            // so the common Mach-O/ELF path stays fast.
-            if program.format == Format::Pe || obj.functions.len() < 16 {
-                obj.functions = crate::disasm::discover_functions(obj);
-            }
-        }
+        prepare(&mut program);
 
         let arches = arches_label(&program.objects.iter().map(|o| o.arch).collect::<Vec<_>>());
 
@@ -138,6 +125,19 @@ impl Engine {
             trail: vec![TrailStep { function: "(data section)".into(), addr: 0, evidence }],
             supersedes: vec![],
         })
+    }
+}
+
+/// Resolves import thunks and recovers functions so a parsed program is ready
+/// for graph building. Shared by the scan and diff paths.
+pub fn prepare(program: &mut crate::model::Program) {
+    for obj in &mut program.objects {
+        if program.format != Format::MachO {
+            resolve_stub_names(obj);
+        }
+        if program.format == Format::Pe || obj.functions.len() < 16 {
+            obj.functions = crate::disasm::discover_functions(obj);
+        }
     }
 }
 

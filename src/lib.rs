@@ -9,6 +9,7 @@
 pub mod analysis;
 pub mod byteutil;
 pub mod decode;
+pub mod diff;
 pub mod disasm;
 pub mod entropy;
 pub mod error;

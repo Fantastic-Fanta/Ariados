@@ -37,6 +37,13 @@ enum Command {
         #[arg(long)]
         hidden_only: bool,
     },
+    /// Compare two binaries and show behavioral differences (tampering check).
+    Diff {
+        /// Reference binary (e.g. the official copy).
+        a: PathBuf,
+        /// Binary to compare against it (e.g. a downloaded copy).
+        b: PathBuf,
+    },
     /// Measure accuracy against benign (and optionally malicious) corpora.
     Eval {
         /// Benign directories (default: system binary dirs). Flagging any of
@@ -57,7 +64,19 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Scan { path, json, verdict_only } => cmd_scan(&path, json, verdict_only),
         Command::Strings { path, min, hidden_only } => cmd_strings(&path, min, hidden_only),
+        Command::Diff { a, b } => cmd_diff(&a, &b),
         Command::Eval { benign, malicious, flag_at } => cmd_eval(&benign, &malicious, &flag_at),
+    }
+}
+
+fn cmd_diff(a: &std::path::Path, b: &std::path::Path) -> ExitCode {
+    let engine = Engine::builtin();
+    match ariados::diff::diff(&engine, a, b) {
+        Ok(gained) => ExitCode::from(if gained { 1 } else { 0 }),
+        Err(e) => {
+            eprintln!("diff error: {e}");
+            ExitCode::from(4)
+        }
     }
 }
 
