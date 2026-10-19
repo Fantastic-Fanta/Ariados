@@ -66,8 +66,11 @@ pub struct Rules {
     behaviors: Vec<BehaviorDef>,
 }
 
-/// How far across call edges a chained behavior will follow a trail.
-const MAX_CALL_DEPTH: usize = 4;
+/// How far across call edges a chained behavior will follow a trail. Kept
+/// short on purpose: in a large binary, a deep reach links almost any two
+/// capabilities and produces false positives. One hop (a function and the
+/// helper it calls) is the sweet spot for precision.
+const MAX_CALL_DEPTH: usize = 1;
 
 impl Rules {
     /// Loads the rule set from TOML text (capabilities + behaviors may be split

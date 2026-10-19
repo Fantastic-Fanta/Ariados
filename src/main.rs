@@ -26,13 +26,51 @@ enum Command {
         #[arg(long)]
         verdict_only: bool,
     },
+    /// Measure accuracy against benign (and optionally malicious) corpora.
+    Eval {
+        /// Benign directories (default: system binary dirs). Flagging any of
+        /// these is a false positive.
+        #[arg(long = "benign", num_args = 1..)]
+        benign: Vec<PathBuf>,
+        /// Malicious directories — only ever point these inside a VM.
+        #[arg(long = "malicious", num_args = 1..)]
+        malicious: Vec<PathBuf>,
+        /// Verdict level at which a file counts as flagged.
+        #[arg(long, default_value = "suspicious")]
+        flag_at: String,
+    },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Scan { path, json, verdict_only } => cmd_scan(&path, json, verdict_only),
+        Command::Eval { benign, malicious, flag_at } => cmd_eval(&benign, &malicious, &flag_at),
     }
+}
+
+fn cmd_eval(benign: &[PathBuf], malicious: &[PathBuf], flag_at: &str) -> ExitCode {
+    use ariados::analysis::VerdictLevel;
+    let level = match flag_at.to_ascii_lowercase().as_str() {
+        "low" | "lowrisk" | "low_risk" => VerdictLevel::LowRisk,
+        "high" | "highly" | "highly_suspicious" => VerdictLevel::HighlySuspicious,
+        _ => VerdictLevel::Suspicious,
+    };
+
+    // Default benign corpus: the usual system binary locations.
+    let default_benign = ["/bin", "/usr/bin", "/usr/sbin", "/sbin"];
+    let benign_paths: Vec<PathBuf> = if benign.is_empty() {
+        default_benign.iter().map(PathBuf::from).collect()
+    } else {
+        benign.to_vec()
+    };
+    let benign_refs: Vec<&std::path::Path> = benign_paths.iter().map(|p| p.as_path()).collect();
+    let malicious_refs: Vec<&std::path::Path> = malicious.iter().map(|p| p.as_path()).collect();
+
+    let mut engine = Engine::builtin();
+    engine.enrich_signing = false; // avoid thousands of codesign subprocesses
+    ariados::eval::report(&engine, &benign_refs, &malicious_refs, level);
+    ExitCode::SUCCESS
 }
 
 fn cmd_scan(path: &std::path::Path, json: bool, verdict_only: bool) -> ExitCode {

@@ -6,10 +6,11 @@
 
 [[capability]]
 id = "network"
-imports = ["curl_easy", "CFURL", "CFNetwork", "NSURLSession", "NSURLConnection",
-           "connect", "send", "sendto", "socket", "getaddrinfo", "SSLWrite",
-           "SSLHandshake", "res_query", "dnssd"]
-strings = ["^https?://", "^ftp://", "^wss?://", "User-Agent:", "POST .* HTTP"]
+# High-signal remote communication only. Raw socket/connect/send are too common
+# in ordinary tools to be useful on their own, so they are deliberately absent.
+imports = ["curl_easy", "CFURLCreateData", "CFHTTP", "NSURLSession",
+           "NSURLConnection", "SSLWrite", "SSLHandshake"]
+strings = ["^https?://", "^ftp://", "^wss?://"]
 
 [[capability]]
 id = "credential-access"
@@ -53,9 +54,10 @@ imports = ["SMLoginItemSetEnabled"]
 
 [[capability]]
 id = "shell-exec"
-# Running another program or a shell command.
-imports = ["system", "popen", "execve", "execl", "execvp", "posix_spawn", "fork", "NSTask"]
-strings = ["/bin/sh", "/bin/bash", "/bin/zsh"]
+# Running another program or a shell command. fork/posix_spawn alone are too
+# common (every tool that launches a child); require an exec/system/shell.
+imports = ["system", "popen", "execve", "execl", "execlp", "execvp", "NSTask"]
+strings = ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/sh -c"]
 
 [[capability]]
 id = "file-write"
@@ -71,8 +73,8 @@ strings = ["P_TRACED", "AmIBeingDebugged", "PT_DENY_ATTACH"]
 [[capability]]
 id = "dynamic-code"
 # Loading or executing code at runtime — unpacking, plugins, injection.
-imports = ["dlopen", "dlsym", "NSCreateObjectFileImageFromMemory",
-           "NSLinkModule", "mprotect", "mmap", "vm_protect"]
+# mmap/mprotect are far too common (allocators, JITs) to include here.
+imports = ["dlopen", "NSCreateObjectFileImageFromMemory", "NSLinkModule"]
 
 [[capability]]
 id = "crypto"

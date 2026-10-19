@@ -68,7 +68,9 @@ pub struct Finding {
     pub supersedes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+// Order matters: variants are declared least→most severe so the derived
+// `Ord` lets `level >= flag_at` work in eval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerdictLevel {
     Clean,

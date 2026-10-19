@@ -11,6 +11,7 @@ pub mod byteutil;
 pub mod disasm;
 pub mod entropy;
 pub mod error;
+pub mod eval;
 pub mod formats;
 pub mod graph;
 pub mod model;
