@@ -64,11 +64,12 @@ impl Policy {
     }
 
     /// Findings that stay alarming even on a code-signed app, because a
-    /// legitimate developer has no reason to pack code, hide strings or evade
-    /// debuggers. Everything else (networking, keychain, persistence) is normal
-    /// app behavior and shouldn't flag a Gatekeeper-accepted binary.
+    /// legitimate developer has no reason to pack code or hide strings.
+    /// Everything else (networking, keychain, persistence, even anti-debug,
+    /// which legit DRM/anti-tamper use and which false-matches easily) is not
+    /// enough to flag a binary tied to a verified developer identity.
     fn anomalous_even_when_trusted(id: &str) -> bool {
-        matches!(id, "obfuscated-indicators" | "packed-code" | "anti-debug")
+        matches!(id, "obfuscated-indicators" | "packed-code")
     }
 
     /// Computes the verdict. `trusted` means the OS accepted the signature

@@ -104,12 +104,18 @@ impl Engine {
             None
         };
 
-        // "Trusted" = Gatekeeper accepted the signature (notarized / Developer
-        // ID). Only known when signing was enriched (single-file scans), so a
-        // bulk eval treats everything as untrusted, as before.
-        let trusted = signing_detail
-            .as_deref()
-            .is_some_and(|d| d.contains("gatekeeper: accepted"));
+        // "Trusted" = signed by a verified Apple developer: Gatekeeper accepted
+        // it, or it carries a Developer ID / Apple authority (an identity-checked,
+        // revocable cert). spctl alone is too strict — it rejects legitimately
+        // Developer-ID-signed apps that just aren't notarized for loose
+        // assessment. Ad-hoc and unsigned binaries have no such authority, so
+        // they stay untrusted. Only known when signing was enriched.
+        let trusted = signing_detail.as_deref().is_some_and(|d| {
+            d.contains("gatekeeper: accepted")
+                || d.contains("authority: Developer ID")
+                || d.contains("authority: Apple")
+                || d.contains("authority: Software Signing")
+        });
         let verdict = self.policy.verdict(&findings, signing, trusted);
 
         Ok(Report {
