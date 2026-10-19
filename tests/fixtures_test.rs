@@ -138,3 +138,37 @@ fn yara_bundled_rules_match_stealer() {
         r.findings
     );
 }
+
+/// Detection regression: every malicious fixture must stay flagged, and the
+/// clean one must not. Runs in CI so a rule or decoder change that silently
+/// breaks detection fails the build.
+#[test]
+fn detection_regression_suite() {
+    let malicious = [
+        "stealer_arm64",
+        "stealer_x64",
+        "stealer_fat",
+        "stealer_elf_arm64",
+        "stealer_elf_x64",
+        "stealer_pe_x64.exe",
+        "dropper_arm64",
+        "xor_arm64",
+        "stackstr_x64",
+        "app_tampered_arm64",
+    ];
+    for name in malicious {
+        let r = scan(name);
+        assert!(
+            r.verdict.level >= VerdictLevel::Suspicious,
+            "{name} should be flagged, got {:?}",
+            r.verdict
+        );
+    }
+    // The clean build of the same app must not be flagged.
+    let clean = scan("app_clean_arm64");
+    assert!(
+        clean.verdict.level < VerdictLevel::Suspicious,
+        "app_clean should be clean, got {:?}",
+        clean.verdict
+    );
+}
