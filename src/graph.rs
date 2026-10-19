@@ -6,7 +6,7 @@
 //! sends it *there*").
 
 use crate::disasm::Disassembler;
-use crate::model::{Arch, NameKind, Object, SectionKind};
+use crate::model::{Arch, NameKind, Object};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
@@ -50,25 +50,7 @@ pub fn build(obj: &Object) -> Graph {
     };
 
     for &start in &obj.functions {
-        let Some(sec) = obj.section_at(start) else {
-            continue;
-        };
-        if sec.kind != SectionKind::Code {
-            continue;
-        }
-        let sec_end = sec.vaddr + sec.size;
-        // End the function at the next function start inside the same section,
-        // falling back to the section end for the last one.
-        let end = obj
-            .functions
-            .iter()
-            .copied()
-            .find(|&f| f > start && f <= sec_end)
-            .unwrap_or(sec_end);
-
-        let off = (start - sec.vaddr) as usize;
-        let end_off = (end - sec.vaddr) as usize;
-        let Some(bytes) = sec.bytes.get(off..end_off.min(sec.bytes.len())) else {
+        let Some(bytes) = obj.function_bytes(start) else {
             continue;
         };
         if bytes.is_empty() {

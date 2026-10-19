@@ -255,6 +255,108 @@ impl Disassembler {
         }
     }
 
+    /// Recovers stack-constructed strings in a function: text built byte by byte
+    /// with immediate stores to stack slots, instead of stored as a literal.
+    /// This is a common light obfuscation that a plaintext string scan misses.
+    ///
+    /// It is a tiny constant tracker, not a full emulator: on x86 it reads
+    /// immediate-to-memory stores directly; on arm64 it follows immediate moves
+    /// into a register and the store that spills them to the stack. Values
+    /// written to the same (base register, offset) are reassembled in offset
+    /// order and split into printable runs.
+    pub fn stack_strings(&self, start: u64, bytes: &[u8], min_len: usize) -> Vec<String> {
+        let Ok(insns) = self.cs.disasm_all(bytes, start) else {
+            return Vec::new();
+        };
+        // (base register, byte offset) -> byte value.
+        let mut slots: std::collections::BTreeMap<(String, i64), u8> =
+            std::collections::BTreeMap::new();
+        let mut regval: HashMap<String, u64> = HashMap::new();
+
+        let stack_reg = |r: &str| matches!(r, "rbp" | "rsp" | "ebp" | "esp" | "sp" | "x29");
+
+        for insn in insns.iter() {
+            let mnem = insn.mnemonic().unwrap_or("");
+            let Ok(detail) = self.cs.insn_detail(insn) else {
+                continue;
+            };
+            let ad = detail.arch_detail();
+
+            if let Some(x) = ad.x86() {
+                // mov <mem [rbp/rsp + disp], size W>, <imm> — write W bytes.
+                let ops: Vec<_> = x.operands().collect();
+                if !mnem.starts_with("mov") {
+                    continue;
+                }
+                let mem = ops.iter().find_map(|o| match &o.op_type {
+                    x86::X86OperandType::Mem(m) => Some((m, o.size)),
+                    _ => None,
+                });
+                let imm = ops.iter().find_map(|o| match &o.op_type {
+                    x86::X86OperandType::Imm(v) => Some(*v),
+                    _ => None,
+                });
+                if let (Some((m, size)), Some(v)) = (mem, imm) {
+                    let base = self.cs.reg_name(m.base()).unwrap_or_default();
+                    if stack_reg(&base) && (1..=8).contains(&size) {
+                        write_bytes(&mut slots, &base, m.disp(), v as u64, size as usize);
+                    }
+                }
+            } else if let Some(a) = ad.arm64() {
+                let ops: Vec<_> = a.operands().collect();
+                match mnem {
+                    "mov" | "movz" => {
+                        if let (Some(d), Some(arm64::Arm64OperandType::Imm(v))) = (
+                            ops.first().and_then(|o| self.reg(&o.op_type)),
+                            ops.get(1).map(|o| o.op_type.clone()),
+                        ) {
+                            regval.insert(d, v as u64);
+                        }
+                    }
+                    "movk" => {
+                        // Merge a 16-bit immediate at a shift into the register.
+                        if let Some(d) = ops.first().and_then(|o| self.reg(&o.op_type))
+                            && let Some(arm64::Arm64OperandType::Imm(v)) =
+                                ops.get(1).map(|o| o.op_type.clone())
+                        {
+                            let cur = regval.get(&d).copied().unwrap_or(0);
+                            regval.insert(d, cur | (v as u64));
+                        }
+                    }
+                    m if m.starts_with("str") || m.starts_with("stur") => {
+                        // str{b,h} Wn/Xn, [sp/x29, #off]
+                        let src = ops.first().and_then(|o| self.reg(&o.op_type));
+                        if let Some(arm64::Arm64OperandType::Mem(mem)) =
+                            ops.get(1).map(|o| o.op_type.clone())
+                        {
+                            let base = self.cs.reg_name(mem.base()).unwrap_or_default();
+                            if stack_reg(&base) {
+                                let width = if m.starts_with("strb") {
+                                    1
+                                } else if m.starts_with("strh") {
+                                    2
+                                } else {
+                                    match src.as_deref() {
+                                        Some(r) if r.starts_with('x') => 8,
+                                        _ => 4,
+                                    }
+                                };
+                                let val = match src.as_deref() {
+                                    Some("wzr") | Some("xzr") | None => 0,
+                                    Some(r) => regval.get(r).copied().unwrap_or(0),
+                                };
+                                write_bytes(&mut slots, &base, mem.disp() as i64, val, width);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        reassemble(&slots, min_len)
+    }
+
     /// A direct branch target: an import stub, or a local function to link in
     /// the call graph.
     fn record_call(&self, obj: &Object, target: u64, out: &mut Xref) {
@@ -281,6 +383,58 @@ impl Disassembler {
             out.strings.push((ea, s));
         }
     }
+}
+
+/// Writes `width` little-endian bytes of `val` into the slot map at `disp`.
+fn write_bytes(
+    slots: &mut std::collections::BTreeMap<(String, i64), u8>,
+    base: &str,
+    disp: i64,
+    val: u64,
+    width: usize,
+) {
+    for i in 0..width.min(8) {
+        let byte = (val >> (i * 8)) as u8;
+        slots.insert((base.to_string(), disp + i as i64), byte);
+    }
+}
+
+/// Walks slot bytes in offset order (per base register), splitting on gaps and
+/// NULs, and returns printable runs of at least `min_len`.
+fn reassemble(
+    slots: &std::collections::BTreeMap<(String, i64), u8>,
+    min_len: usize,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur_base: Option<&str> = None;
+    let mut prev_off: Option<i64> = None;
+    let mut run: Vec<u8> = Vec::new();
+
+    let flush = |run: &mut Vec<u8>, out: &mut Vec<String>| {
+        if run.len() >= min_len {
+            let text: String = run.iter().map(|&b| b as char).collect();
+            if text.chars().filter(|c| c.is_ascii_alphabetic()).count() >= min_len / 2 {
+                out.push(text);
+            }
+        }
+        run.clear();
+    };
+
+    for ((base, off), &byte) in slots {
+        let contiguous = cur_base == Some(base.as_str()) && prev_off == Some(off - 1);
+        if !contiguous {
+            flush(&mut run, &mut out);
+        }
+        if (0x20..=0x7e).contains(&byte) {
+            run.push(byte);
+        } else {
+            flush(&mut run, &mut out);
+        }
+        cur_base = Some(base.as_str());
+        prev_off = Some(*off);
+    }
+    flush(&mut run, &mut out);
+    out
 }
 
 /// Appends a `; -> name` or `; "string"` comment for an address a disassembly

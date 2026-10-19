@@ -121,7 +121,9 @@ impl Engine {
         use crate::analysis::{Evidence, TrailStep};
         let mut seen = std::collections::BTreeSet::new();
         let mut evidence = Vec::new();
+
         for obj in &program.objects {
+            // XOR-obfuscated strings in data sections.
             for h in crate::decode::xor_strings(obj, 6) {
                 if let Some(label) = crate::decode::notable(&h.text)
                     && seen.insert(h.text.clone())
@@ -132,13 +134,30 @@ impl Engine {
                     )));
                 }
             }
+            // Stack-constructed strings (built byte by byte in code).
+            if let Ok(dis) = crate::disasm::Disassembler::new(obj.arch) {
+                for &start in &obj.functions {
+                    let Some(bytes) = obj.function_bytes(start) else {
+                        continue;
+                    };
+                    for s in dis.stack_strings(start, bytes, 6) {
+                        if let Some(label) = crate::decode::notable(&s)
+                            && seen.insert(s.clone())
+                        {
+                            evidence.push(Evidence::String(format!(
+                                "[hidden · stack string · {label}] {s}"
+                            )));
+                        }
+                    }
+                }
+            }
         }
         if evidence.is_empty() {
             return None;
         }
         Some(Finding {
             id: "obfuscated-indicators".into(),
-            title: "Hides suspicious strings with single-byte XOR".into(),
+            title: "Hides suspicious strings (XOR or stack-constructed)".into(),
             severity: Severity::High,
             arch: program
                 .objects

@@ -172,6 +172,25 @@ fn cmd_strings(path: &std::path::Path, min: usize, hidden_only: bool) -> ExitCod
             }
         }
     }
+
+    println!("\n# hidden (stack-constructed) strings");
+    let mut seen2 = std::collections::BTreeSet::new();
+    for obj in &program.objects {
+        if let Ok(dis) = ariados::disasm::Disassembler::new(obj.arch) {
+            for &start in &obj.functions {
+                if let Some(bytes) = obj.function_bytes(start) {
+                    for s in dis.stack_strings(start, bytes, min) {
+                        if seen2.insert(s.clone()) {
+                            let mark = ariados::decode::notable(&s)
+                                .map(|l| format!("  <-- {l}"))
+                                .unwrap_or_default();
+                            println!("[{start:#x}]  {s}{mark}");
+                        }
+                    }
+                }
+            }
+        }
+    }
     ExitCode::SUCCESS
 }
 

@@ -5,7 +5,6 @@
 use crate::disasm::Disassembler;
 use crate::graph::{self, FunctionInfo};
 use crate::llm::Provider;
-use crate::model::{Object, SectionKind};
 use crate::scan::prepare;
 use regex::Regex;
 use std::path::Path;
@@ -51,24 +50,6 @@ fn candidates(g: &graph::Graph) -> Vec<&FunctionInfo> {
     out
 }
 
-/// Returns the raw bytes of a function and its start address.
-fn function_bytes(obj: &Object, start: u64) -> Option<&[u8]> {
-    let sec = obj.section_at(start)?;
-    if sec.kind != SectionKind::Code {
-        return None;
-    }
-    let sec_end = sec.vaddr + sec.size;
-    let end = obj
-        .functions
-        .iter()
-        .copied()
-        .find(|&f| f > start && f <= sec_end)
-        .unwrap_or(sec_end);
-    let off = (start - sec.vaddr) as usize;
-    let end_off = (end - sec.vaddr) as usize;
-    sec.bytes.get(off..end_off.min(sec.bytes.len()))
-}
-
 pub struct Options {
     pub no_llm: bool,
     pub show_prompt: bool,
@@ -97,7 +78,7 @@ pub fn solve(path: &Path, opts: &Options) -> Result<String, String> {
 
     let mut listings = String::new();
     for f in &cands {
-        if let Some(bytes) = function_bytes(obj, f.addr) {
+        if let Some(bytes) = obj.function_bytes(f.addr) {
             listings.push_str(&format!("; function {} @ {:#x}\n", f.name, f.addr));
             listings.push_str(&dis.listing(obj, f.addr, bytes));
             listings.push('\n');

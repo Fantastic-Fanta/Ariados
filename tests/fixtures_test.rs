@@ -92,3 +92,19 @@ fn solve_finds_the_secret_in_the_check() {
     assert!(out.contains("h4ck3r-5Ecr3t"), "secret not surfaced:\n{out}");
     assert!(out.contains("strcmp"), "comparison not resolved:\n{out}");
 }
+
+#[test]
+fn stack_strings_are_recovered() {
+    let r = scan("stackstr_x64");
+    assert!(has_finding(&r, "obfuscated-indicators"), "{:?}", r.findings);
+    let f = r
+        .findings
+        .iter()
+        .find(|f| f.id == "obfuscated-indicators")
+        .unwrap();
+    let joined = format!("{:?}", f.trail);
+    assert!(
+        joined.contains("stack string") && joined.contains("osascript"),
+        "{joined}"
+    );
+}
