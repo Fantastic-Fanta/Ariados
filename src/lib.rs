@@ -16,11 +16,13 @@ pub mod error;
 pub mod eval;
 pub mod formats;
 pub mod graph;
+pub mod llm;
 pub mod model;
 pub mod policy;
 pub mod report;
 pub mod rules;
 pub mod scan;
+pub mod solve;
 pub mod strings;
 
 pub use error::AnalyzeError;

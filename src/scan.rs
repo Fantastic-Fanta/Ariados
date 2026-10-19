@@ -23,11 +23,21 @@ pub struct Engine {
 
 impl Engine {
     pub fn builtin() -> Engine {
-        Engine { rules: Rules::builtin(), policy: Policy::builtin(), enrich_signing: true, decode_hidden: true }
+        Engine {
+            rules: Rules::builtin(),
+            policy: Policy::builtin(),
+            enrich_signing: true,
+            decode_hidden: true,
+        }
     }
 
     pub fn with_rules(rules: Rules, policy: Policy) -> Engine {
-        Engine { rules, policy, enrich_signing: true, decode_hidden: true }
+        Engine {
+            rules,
+            policy,
+            enrich_signing: true,
+            decode_hidden: true,
+        }
     }
 
     /// Scans one binary file and produces a report.
@@ -45,7 +55,10 @@ impl Engine {
         for obj in &program.objects {
             let g = graph::build(obj);
             for f in self.rules.match_graph(&g, obj.arch.label()) {
-                arches_with.entry(f.id.clone()).or_default().push(obj.arch.label().to_string());
+                arches_with
+                    .entry(f.id.clone())
+                    .or_default()
+                    .push(obj.arch.label().to_string());
                 merged.entry(f.id.clone()).or_insert(f);
             }
         }
@@ -60,19 +73,25 @@ impl Engine {
             .collect();
         // Hidden strings: a suspicious string that was XOR-obfuscated is a much
         // stronger signal than a plaintext one, so it gets its own finding.
-        if self.decode_hidden {
-            if let Some(f) = self.hidden_string_finding(&program) {
-                findings.push(f);
-            }
+        if self.decode_hidden
+            && let Some(f) = self.hidden_string_finding(&program)
+        {
+            findings.push(f);
         }
 
         // Drop findings that a stronger present finding supersedes.
-        let superseded: std::collections::BTreeSet<String> =
-            findings.iter().flat_map(|f| f.supersedes.iter().cloned()).collect();
+        let superseded: std::collections::BTreeSet<String> = findings
+            .iter()
+            .flat_map(|f| f.supersedes.iter().cloned())
+            .collect();
         findings.retain(|f| !superseded.contains(&f.id));
         findings.sort_by(|a, b| b.severity.cmp(&a.severity).then(a.id.cmp(&b.id)));
 
-        let signing = program.objects.first().map(|o| o.signing).unwrap_or(Signing::Unsigned);
+        let signing = program
+            .objects
+            .first()
+            .map(|o| o.signing)
+            .unwrap_or(Signing::Unsigned);
         let signing_detail = if self.enrich_signing && program.format == Format::MachO {
             codesign_detail(path)
         } else {
@@ -104,13 +123,13 @@ impl Engine {
         let mut evidence = Vec::new();
         for obj in &program.objects {
             for h in crate::decode::xor_strings(obj, 6) {
-                if let Some(label) = crate::decode::notable(&h.text) {
-                    if seen.insert(h.text.clone()) {
-                        evidence.push(Evidence::String(format!(
-                            "[hidden · XOR key {:#04x} · {label}] {}",
-                            h.key, h.text
-                        )));
-                    }
+                if let Some(label) = crate::decode::notable(&h.text)
+                    && seen.insert(h.text.clone())
+                {
+                    evidence.push(Evidence::String(format!(
+                        "[hidden · XOR key {:#04x} · {label}] {}",
+                        h.key, h.text
+                    )));
                 }
             }
         }
@@ -121,8 +140,17 @@ impl Engine {
             id: "obfuscated-indicators".into(),
             title: "Hides suspicious strings with single-byte XOR".into(),
             severity: Severity::High,
-            arch: program.objects.iter().map(|o| o.arch.label()).collect::<Vec<_>>().join(" + "),
-            trail: vec![TrailStep { function: "(data section)".into(), addr: 0, evidence }],
+            arch: program
+                .objects
+                .iter()
+                .map(|o| o.arch.label())
+                .collect::<Vec<_>>()
+                .join(" + "),
+            trail: vec![TrailStep {
+                function: "(data section)".into(),
+                addr: 0,
+                evidence,
+            }],
             supersedes: vec![],
         })
     }
@@ -155,10 +183,10 @@ pub fn collect_targets(path: &Path) -> Vec<PathBuf> {
             continue;
         }
         // Peek at the first bytes; only parse things that look executable.
-        if let Ok(head) = read_head(p, 4) {
-            if crate::formats::looks_executable(&head) {
-                out.push(p.to_path_buf());
-            }
+        if let Ok(head) = read_head(p, 4)
+            && crate::formats::looks_executable(&head)
+        {
+            out.push(p.to_path_buf());
         }
     }
     out.sort();
@@ -178,7 +206,11 @@ fn read_head(path: &Path, n: usize) -> std::io::Result<Vec<u8>> {
 /// scan — if the tools aren't there or the file isn't signed, returns None.
 fn codesign_detail(path: &Path) -> Option<String> {
     use std::process::Command;
-    let out = Command::new("codesign").args(["-dv", "--verbose=2"]).arg(path).output().ok()?;
+    let out = Command::new("codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(path)
+        .output()
+        .ok()?;
     // codesign writes its detail to stderr.
     let text = String::from_utf8_lossy(&out.stderr);
     let mut bits = Vec::new();
@@ -192,7 +224,11 @@ fn codesign_detail(path: &Path) -> Option<String> {
         bits.insert(0, "ad-hoc signed".to_string());
     }
     // Gatekeeper assessment.
-    if let Ok(spctl) = Command::new("spctl").args(["-a", "-vv", "--type", "execute"]).arg(path).output() {
+    if let Ok(spctl) = Command::new("spctl")
+        .args(["-a", "-vv", "--type", "execute"])
+        .arg(path)
+        .output()
+    {
         let s = String::from_utf8_lossy(&spctl.stderr);
         if s.contains("accepted") {
             bits.push("gatekeeper: accepted".into());

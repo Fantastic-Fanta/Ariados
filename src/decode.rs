@@ -51,11 +51,19 @@ pub fn xor_strings(obj: &Object, min_len: usize) -> Vec<Hidden> {
                     (true, None) => run_start = Some(i),
                     (false, Some(s)) => {
                         if i - s >= min_len {
-                            let text: String = data[s..i].iter().map(|&b| (b ^ key) as char).collect();
+                            let text: String =
+                                data[s..i].iter().map(|&b| (b ^ key) as char).collect();
                             // Require some letters so we don't report runs of
                             // decoded punctuation or whitespace.
-                            if text.chars().filter(|c| c.is_ascii_alphabetic()).count() >= min_len / 2 {
-                                out.push(Hidden { section: sec.name.clone(), offset: s, key, text });
+                            if text.chars().filter(|c| c.is_ascii_alphabetic()).count()
+                                >= min_len / 2
+                            {
+                                out.push(Hidden {
+                                    section: sec.name.clone(),
+                                    offset: s,
+                                    key,
+                                    text,
+                                });
                             }
                         }
                         run_start = None;

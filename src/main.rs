@@ -1,13 +1,17 @@
 //! Ariados command-line interface.
 
 use ariados::report;
-use ariados::scan::{collect_targets, Engine};
+use ariados::scan::{Engine, collect_targets};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "ariados", version, about = "Static binary triage with evidence trails")]
+#[command(
+    name = "ariados",
+    version,
+    about = "Static binary triage with evidence trails"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -37,6 +41,18 @@ enum Command {
         #[arg(long)]
         hidden_only: bool,
     },
+    /// Reverse a crackme: find the check function and (opt-in) ask an LLM for
+    /// the input that passes it. Configure a provider via LLM_PROVIDER/LLM_API_KEY.
+    Solve {
+        /// The crackme binary.
+        path: PathBuf,
+        /// Don't call any LLM; just show the candidate disassembly.
+        #[arg(long)]
+        no_llm: bool,
+        /// Print the prompt that would be sent, without calling anything.
+        #[arg(long)]
+        show_prompt: bool,
+    },
     /// Compare two binaries and show behavioral differences (tampering check).
     Diff {
         /// Reference binary (e.g. the official copy).
@@ -62,10 +78,50 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
-        Command::Scan { path, json, verdict_only } => cmd_scan(&path, json, verdict_only),
-        Command::Strings { path, min, hidden_only } => cmd_strings(&path, min, hidden_only),
+        Command::Scan {
+            path,
+            json,
+            verdict_only,
+        } => cmd_scan(&path, json, verdict_only),
+        Command::Strings {
+            path,
+            min,
+            hidden_only,
+        } => cmd_strings(&path, min, hidden_only),
+        Command::Solve {
+            path,
+            no_llm,
+            show_prompt,
+        } => cmd_solve(&path, no_llm, show_prompt),
         Command::Diff { a, b } => cmd_diff(&a, &b),
-        Command::Eval { benign, malicious, flag_at } => cmd_eval(&benign, &malicious, &flag_at),
+        Command::Eval {
+            benign,
+            malicious,
+            flag_at,
+        } => cmd_eval(&benign, &malicious, &flag_at),
+    }
+}
+
+fn cmd_solve(path: &std::path::Path, no_llm: bool, show_prompt: bool) -> ExitCode {
+    // Load ~/Ariados/.env and ./.env so keys can live in a gitignored file.
+    if let Some(home) = std::env::var_os("HOME") {
+        ariados::llm::load_dotenv(&std::path::Path::new(&home).join("Ariados/.env"));
+    }
+    ariados::llm::load_dotenv(std::path::Path::new(".env"));
+
+    let opts = ariados::solve::Options {
+        no_llm,
+        show_prompt,
+    };
+    match ariados::solve::solve(path, &opts) {
+        Ok(text) => {
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("solve error: {e}");
+            ExitCode::from(4)
+        }
     }
 }
 
@@ -106,8 +162,13 @@ fn cmd_strings(path: &std::path::Path, min: usize, hidden_only: bool) -> ExitCod
     for obj in &program.objects {
         for h in ariados::decode::xor_strings(obj, min) {
             if seen.insert((h.key, h.text.clone())) {
-                let mark = ariados::decode::notable(&h.text).map(|l| format!("  <-- {l}")).unwrap_or_default();
-                println!("[{}+{:#x} XOR {:#04x}]  {}{mark}", h.section, h.offset, h.key, h.text);
+                let mark = ariados::decode::notable(&h.text)
+                    .map(|l| format!("  <-- {l}"))
+                    .unwrap_or_default();
+                println!(
+                    "[{}+{:#x} XOR {:#04x}]  {}{mark}",
+                    h.section, h.offset, h.key, h.text
+                );
             }
         }
     }
@@ -168,15 +229,26 @@ fn cmd_scan(path: &std::path::Path, json: bool, verdict_only: bool) -> ExitCode 
 
     if json {
         let joined: Vec<_> = reports.iter().collect();
-        println!("{}", serde_json::to_string_pretty(&joined).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&joined).unwrap_or_default()
+        );
     } else {
         for (i, r) in reports.iter().enumerate() {
             if i > 0 {
                 println!("\n{}\n", "─".repeat(60));
             }
             if verdict_only {
-                let name = std::path::Path::new(&r.path).file_name().unwrap_or_default().to_string_lossy();
-                println!("{}  {}  (score {})", r.verdict.level.headline(), name, r.verdict.score);
+                let name = std::path::Path::new(&r.path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                println!(
+                    "{}  {}  (score {})",
+                    r.verdict.level.headline(),
+                    name,
+                    r.verdict.score
+                );
             } else {
                 print!("{}", report::render_text(r));
             }

@@ -32,7 +32,12 @@ pub fn parse(data: &[u8]) -> Result<Program> {
         return Err(AnalyzeError::UnknownFormat(magic));
     };
 
-    Ok(Program { format, sha256, size: data.len() as u64, objects })
+    Ok(Program {
+        format,
+        sha256,
+        size: data.len() as u64,
+        objects,
+    })
 }
 
 /// True if the bytes look like an executable we can parse. Cheap check used

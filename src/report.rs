@@ -76,11 +76,18 @@ fn render_finding(f: &Finding) -> String {
 
     for (i, step) in f.trail.iter().enumerate() {
         let indent = "  ";
-        s.push_str(&format!("{indent}fn {} @ {:#x}\n", step.function, step.addr));
+        s.push_str(&format!(
+            "{indent}fn {} @ {:#x}\n",
+            step.function, step.addr
+        ));
         let last_step = i == f.trail.len() - 1;
         for (j, ev) in step.evidence.iter().enumerate() {
             let last_ev = j == step.evidence.len() - 1;
-            let branch = if last_ev && last_step { "└─" } else { "├─" };
+            let branch = if last_ev && last_step {
+                "└─"
+            } else {
+                "├─"
+            };
             s.push_str(&format!("{indent}{branch} {}\n", render_evidence(ev)));
         }
     }

@@ -56,7 +56,14 @@ const INDIRECT_SYMBOL_ABS: u32 = 0x4000_0000;
 pub fn matches(magic: u32) -> bool {
     matches!(
         magic,
-        MH_MAGIC_64 | MH_CIGAM_64 | MH_MAGIC_32 | MH_CIGAM_32 | FAT_MAGIC | FAT_CIGAM | FAT_MAGIC_64 | FAT_CIGAM_64
+        MH_MAGIC_64
+            | MH_CIGAM_64
+            | MH_MAGIC_32
+            | MH_CIGAM_32
+            | FAT_MAGIC
+            | FAT_CIGAM
+            | FAT_MAGIC_64
+            | FAT_CIGAM_64
     )
 }
 
@@ -99,7 +106,9 @@ fn parse_fat(data: &[u8], magic: u32) -> Result<Vec<Object>> {
         }
     }
     if objects.is_empty() {
-        return Err(AnalyzeError::Malformed("no usable slices in fat binary".into()));
+        return Err(AnalyzeError::Malformed(
+            "no usable slices in fat binary".into(),
+        ));
     }
     Ok(objects)
 }
@@ -288,7 +297,13 @@ fn parse_thin(data: &[u8], _base: usize) -> Result<Object> {
                 for i in 0..count {
                     let idx = sec.reserved1 as usize + i as usize;
                     if let Some(name) = indirect_name(&indirect, &sym_names, idx) {
-                        names.insert(sec.addr + i * stub_size, NamedAddr { name, kind: NameKind::Import });
+                        names.insert(
+                            sec.addr + i * stub_size,
+                            NamedAddr {
+                                name,
+                                kind: NameKind::Import,
+                            },
+                        );
                     }
                 }
             }
@@ -308,7 +323,10 @@ fn parse_thin(data: &[u8], _base: usize) -> Result<Object> {
 
     // Local defined functions. Don't overwrite an import mapping.
     for (addr, name) in &defined {
-        names.entry(*addr).or_insert_with(|| NamedAddr { name: name.clone(), kind: NameKind::LocalFunction });
+        names.entry(*addr).or_insert_with(|| NamedAddr {
+            name: name.clone(),
+            kind: NameKind::LocalFunction,
+        });
     }
 
     // Convert entry offset to a virtual address using the text base.
@@ -361,7 +379,11 @@ fn parse_thin(data: &[u8], _base: usize) -> Result<Object> {
         functions,
         names,
         import_slots,
-        signing: if signed { Signing::Signed } else { Signing::Unsigned },
+        signing: if signed {
+            Signing::Signed
+        } else {
+            Signing::Unsigned
+        },
         libraries,
     })
 }
@@ -459,7 +481,9 @@ fn indirect_name(indirect: &[u32], sym_names: &[String], idx: usize) -> Option<S
 fn decode_function_starts(data: &[u8], off: u32, size: u32, base: u64, out: &mut Vec<u64>) {
     let start = off as usize;
     let end = start.saturating_add(size as usize);
-    let Some(table) = data.get(start..end) else { return };
+    let Some(table) = data.get(start..end) else {
+        return;
+    };
     let mut r = Reader::new(table, true);
     let mut addr = base;
     while r.remaining() > 0 {

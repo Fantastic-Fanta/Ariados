@@ -85,7 +85,9 @@ impl Rules {
                 let string_res = c
                     .strings
                     .iter()
-                    .map(|p| Regex::new(p).unwrap_or_else(|_| Regex::new(&regex::escape(p)).unwrap()))
+                    .map(|p| {
+                        Regex::new(p).unwrap_or_else(|_| Regex::new(&regex::escape(p)).unwrap())
+                    })
                     .collect();
                 cap_index.insert(c.id.clone(), caps.len());
                 caps.push(CompiledCap {
@@ -95,7 +97,11 @@ impl Rules {
             }
             behaviors.extend(rf.behavior);
         }
-        Ok(Rules { caps, cap_index, behaviors })
+        Ok(Rules {
+            caps,
+            cap_index,
+            behaviors,
+        })
     }
 
     /// The built-in rule set, embedded in the binary so it works with no
@@ -179,7 +185,11 @@ impl Rules {
 
         // Form 2: several capabilities in the same function.
         if !b.all.is_empty() {
-            let idxs: Vec<usize> = b.all.iter().filter_map(|c| self.cap_index.get(c).copied()).collect();
+            let idxs: Vec<usize> = b
+                .all
+                .iter()
+                .filter_map(|c| self.cap_index.get(c).copied())
+                .collect();
             if idxs.len() != b.all.len() {
                 return None;
             }
@@ -246,6 +256,7 @@ impl Rules {
         None
     }
 
+    #[allow(clippy::too_many_arguments)] // cohesive internal builder
     fn build_chain_finding(
         &self,
         b: &BehaviorDef,
@@ -260,22 +271,26 @@ impl Rules {
         for (i, &addr) in path.iter().enumerate() {
             let f = g.functions.get(&addr);
             let mut ev = Vec::new();
-            if i == 0 {
-                if let Some(f) = f {
-                    ev.extend(self.cap_hits(src_cap, f));
-                }
+            if i == 0
+                && let Some(f) = f
+            {
+                ev.extend(self.cap_hits(src_cap, f));
             }
-            if i == path.len() - 1 {
-                if let Some(f) = f {
-                    ev.extend(self.cap_hits(dst_cap, f));
-                }
+            if i == path.len() - 1
+                && let Some(f) = f
+            {
+                ev.extend(self.cap_hits(dst_cap, f));
             }
             // Name the next hop so the reader can follow the chain.
             if i + 1 < path.len() {
                 ev.push(Evidence::Call(g.name_of(path[i + 1])));
             }
             dedup_evidence(&mut ev);
-            trail.push(TrailStep { function: g.name_of(addr), addr, evidence: ev });
+            trail.push(TrailStep {
+                function: g.name_of(addr),
+                addr,
+                evidence: ev,
+            });
         }
         Finding {
             id: b.id.clone(),
@@ -300,7 +315,11 @@ fn single_step_finding(
         title: b.title.clone(),
         severity: sev,
         arch: arch_label.to_string(),
-        trail: vec![TrailStep { function: f.name.clone(), addr: f.addr, evidence }],
+        trail: vec![TrailStep {
+            function: f.name.clone(),
+            addr: f.addr,
+            evidence,
+        }],
         supersedes: b.supersedes.clone(),
     }
 }

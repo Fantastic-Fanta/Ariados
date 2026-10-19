@@ -12,7 +12,7 @@
 //! It also prints which behaviors fired how often, so a noisy rule is obvious.
 
 use crate::analysis::VerdictLevel;
-use crate::scan::{collect_targets, Engine};
+use crate::scan::{Engine, collect_targets};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -45,7 +45,8 @@ pub fn run_corpus(engine: &Engine, dirs: &[&Path], flag_at: VerdictLevel) -> Cor
                     }
                     if r.verdict.level >= flag_at {
                         res.flagged += 1;
-                        res.flagged_files.push((r.path, r.verdict.level, r.verdict.score));
+                        res.flagged_files
+                            .push((r.path, r.verdict.level, r.verdict.score));
                     }
                 }
                 Err(_) => res.errors += 1,
@@ -56,12 +57,7 @@ pub fn run_corpus(engine: &Engine, dirs: &[&Path], flag_at: VerdictLevel) -> Cor
 }
 
 /// Runs an evaluation and prints a human-readable summary.
-pub fn report(
-    engine: &Engine,
-    benign: &[&Path],
-    malicious: &[&Path],
-    flag_at: VerdictLevel,
-) {
+pub fn report(engine: &Engine, benign: &[&Path], malicious: &[&Path], flag_at: VerdictLevel) {
     println!("Evaluation (flagging at: {:?})\n", flag_at);
 
     let b = run_corpus(engine, benign, flag_at);

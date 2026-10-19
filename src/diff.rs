@@ -9,7 +9,7 @@
 
 use crate::analysis::VerdictLevel;
 use crate::graph;
-use crate::scan::{prepare, Engine};
+use crate::scan::{Engine, prepare};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -46,7 +46,13 @@ pub fn fingerprint(engine: &Engine, path: &Path) -> Result<Fingerprint, String> 
         }
     }
 
-    Ok(Fingerprint { imports, strings, functions, findings, verdict: report.verdict.level })
+    Ok(Fingerprint {
+        imports,
+        strings,
+        functions,
+        findings,
+        verdict: report.verdict.level,
+    })
 }
 
 fn print_set(title: &str, items: &BTreeSet<String>, limit: usize) {
@@ -93,7 +99,8 @@ pub fn diff(engine: &Engine, a: &Path, b: &Path) -> Result<bool, String> {
         print_set("findings", &removed_findings, 30);
     }
 
-    let gained = !added_imports.is_empty() || !added_strings.is_empty() || !added_findings.is_empty();
+    let gained =
+        !added_imports.is_empty() || !added_strings.is_empty() || !added_findings.is_empty();
     if !gained {
         println!("\nNo new imports, strings or findings in B.");
     } else if !added_findings.is_empty() {

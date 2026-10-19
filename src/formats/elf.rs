@@ -7,8 +7,8 @@
 
 use crate::error::AnalyzeError;
 use crate::model::*;
-use goblin::elf::section_header::{SHF_EXECINSTR, SHT_NOBITS};
 use goblin::elf::Elf;
+use goblin::elf::section_header::{SHF_EXECINSTR, SHT_NOBITS};
 use std::collections::BTreeMap;
 
 type Result<T> = std::result::Result<T, AnalyzeError>;
@@ -39,9 +39,11 @@ pub fn parse(data: &[u8]) -> Result<Vec<Object>> {
         let bytes = if sh.sh_type == SHT_NOBITS {
             Vec::new()
         } else {
-            data.get(sh.sh_offset as usize..(sh.sh_offset as usize).saturating_add(sh.sh_size as usize))
-                .map(|b| b.to_vec())
-                .unwrap_or_default()
+            data.get(
+                sh.sh_offset as usize..(sh.sh_offset as usize).saturating_add(sh.sh_size as usize),
+            )
+            .map(|b| b.to_vec())
+            .unwrap_or_default()
         };
         sections.push(Section {
             name,
@@ -83,10 +85,10 @@ pub fn parse(data: &[u8]) -> Result<Vec<Object>> {
     let mut import_slots: BTreeMap<u64, String> = BTreeMap::new();
     for relocs in [&elf.pltrelocs, &elf.dynrelas, &elf.dynrels] {
         for r in relocs.iter() {
-            if let Some(name) = dynsym_names.get(r.r_sym) {
-                if !name.is_empty() {
-                    import_slots.insert(r.r_offset, name.clone());
-                }
+            if let Some(name) = dynsym_names.get(r.r_sym)
+                && !name.is_empty()
+            {
+                import_slots.insert(r.r_offset, name.clone());
             }
         }
     }

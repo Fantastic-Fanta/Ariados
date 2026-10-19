@@ -41,11 +41,18 @@ pub fn build(obj: &Object) -> Graph {
     let mut functions = BTreeMap::new();
     let dis = match Disassembler::new(obj.arch) {
         Ok(d) => d,
-        Err(_) => return Graph { arch: obj.arch, functions },
+        Err(_) => {
+            return Graph {
+                arch: obj.arch,
+                functions,
+            };
+        }
     };
 
     for &start in &obj.functions {
-        let Some(sec) = obj.section_at(start) else { continue };
+        let Some(sec) = obj.section_at(start) else {
+            continue;
+        };
         if sec.kind != SectionKind::Code {
             continue;
         }
@@ -61,7 +68,9 @@ pub fn build(obj: &Object) -> Graph {
 
         let off = (start - sec.vaddr) as usize;
         let end_off = (end - sec.vaddr) as usize;
-        let Some(bytes) = sec.bytes.get(off..end_off.min(sec.bytes.len())) else { continue };
+        let Some(bytes) = sec.bytes.get(off..end_off.min(sec.bytes.len())) else {
+            continue;
+        };
         if bytes.is_empty() {
             continue;
         }
@@ -83,5 +92,8 @@ pub fn build(obj: &Object) -> Graph {
         );
     }
 
-    Graph { arch: obj.arch, functions }
+    Graph {
+        arch: obj.arch,
+        functions,
+    }
 }
