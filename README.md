@@ -5,8 +5,8 @@
 
 Static triage for Mach-O, ELF and PE executables. Ariados reports what a binary
 *does* that looks dangerous and shows the exact code, strings and library calls
-behind every finding — evidence you can verify, not an opaque verdict. It reads
-files; it never runs them.
+behind every finding, so you get evidence you can verify rather than an opaque
+verdict. It reads files; it never runs them.
 
 ```
 ● HIGH   Collects stored credentials and reaches network-sending code  (arm64)
@@ -20,12 +20,12 @@ files; it never runs them.
 
 ## Features
 
-- **Evidence trails** — every finding cites the functions, strings and imports that triggered it.
-- **Mach-O, ELF and PE** — fat binaries and `.app` bundles; a hand-written Mach-O parser and a custom arm64 decoder.
-- **Hidden strings** — single-byte XOR and stack-constructed string recovery; high-entropy packing detection.
-- **YARA** — run signatures via the pure-Rust `yara-x`, or generate and validate your own.
-- **Signing-aware** — notarized apps aren't flagged on behavior alone; unsigned downloads get full scrutiny.
-- **Beyond binaries** — `supplychain` (install scripts, npm/MCP/agent configs) and `audit` (macOS persistence).
+- **Evidence trails**: every finding cites the functions, strings and imports that triggered it.
+- **Mach-O, ELF and PE**: fat binaries and `.app` bundles, with a hand-written Mach-O parser and a custom arm64 decoder.
+- **Hidden strings**: single-byte XOR and stack-constructed string recovery, plus high-entropy packing detection.
+- **YARA**: run signatures via the pure-Rust `yara-x`, or generate and validate your own.
+- **Signing-aware**: notarized apps aren't flagged on behavior alone; unsigned downloads get full scrutiny.
+- **Beyond binaries**: `supplychain` (install scripts, npm/MCP/agent configs) and `audit` (macOS persistence).
 
 ## Install
 
@@ -60,4 +60,4 @@ corpus. Handle untrusted samples in a VM.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
